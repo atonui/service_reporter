@@ -1,0 +1,57 @@
+"""Small dependency-free browser interface for the local application."""
+
+
+def home_page() -> str:
+    return """<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Service Intelligence</title><style>
+:root{--navy:#17324d;--blue:#2878b5;--pale:#eaf3f9;--line:#ced8e1;--text:#263442;--muted:#647483}
+*{box-sizing:border-box}body{margin:0;background:#f4f7fa;color:var(--text);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{width:min(1040px,calc(100% - 32px));margin:48px auto}.hero{background:linear-gradient(135deg,#17324d,#245a7d);color:white;border-radius:18px;padding:38px;box-shadow:0 14px 38px #17324d24}
+h1{margin:0 0 8px;font-size:34px}.hero p{max-width:680px;margin:0;color:#dbe9f2;font-size:17px}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:22px}
+.card{display:flex;flex-direction:column;background:white;border:1px solid var(--line);border-radius:14px;padding:22px;text-decoration:none;color:var(--text);box-shadow:0 8px 24px #17324d0d}
+.card:hover{border-color:var(--blue);transform:translateY(-2px)}.step{color:var(--blue);font-weight:800;font-size:12px;text-transform:uppercase;letter-spacing:.08em}.card h2{color:var(--navy);margin:8px 0;font-size:21px}.card p{margin:0 0 18px;color:var(--muted);flex:1}.go{color:var(--blue);font-weight:700}
+.links{margin-top:20px;text-align:center}.links a{color:var(--blue);margin:0 10px}@media(max-width:760px){.grid{grid-template-columns:1fr}.hero{padding:28px}}
+</style></head><body><main><section class="hero"><h1>Service Intelligence</h1><p>Turn signed work orders into auditable service events and quarterly management reports.</p></section>
+<section class="grid">
+<a class="card" href="/batch-upload"><span class="step">Step 1</span><h2>Upload work orders</h2><p>Extract and save up to 20 PDF work orders in one batch.</p><span class="go">Open batch upload -&gt;</span></a>
+<a class="card" href="/review"><span class="step">Step 2</span><h2>Review events</h2><p>Correct extracted fields, approve records, and retain the audit history.</p><span class="go">Open review queue -&gt;</span></a>
+<a class="card" href="/reports"><span class="step">Step 3</span><h2>Quarterly reports</h2><p>View quarterly metrics, incidents, parts usage, and download the PDF.</p><span class="go">Open reporting -&gt;</span></a>
+</section><div class="links"><a href="/docs">API documentation</a><a href="/v1/service-events">Saved-event JSON</a></div></main></body></html>"""
+
+
+def reports_page() -> str:
+    return """<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Quarterly Reports - Service Intelligence</title><style>
+:root{--navy:#17324d;--blue:#2878b5;--pale:#eaf3f9;--line:#ced8e1;--text:#263442;--muted:#647483;--danger:#a52828;--success:#19723b}
+*{box-sizing:border-box}body{margin:0;background:#f4f7fa;color:var(--text);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{width:min(1180px,calc(100% - 32px));margin:32px auto}.card{background:white;border:1px solid var(--line);border-radius:14px;padding:24px;box-shadow:0 10px 30px #17324d12}
+.top{display:flex;justify-content:space-between;align-items:flex-start;gap:18px}h1,h2{color:var(--navy)}h1{margin:0 0 4px}h2{font-size:19px;margin:28px 0 10px}.sub{margin:0;color:var(--muted)}
+.form{display:grid;grid-template-columns:1fr 1fr 1.3fr auto;gap:12px;align-items:end;margin-top:22px;padding:18px;background:var(--pale);border-radius:10px}label{font-weight:700;color:var(--navy)}select,input{display:block;width:100%;margin-top:5px;padding:9px;border:1px solid var(--line);border-radius:7px;background:white}
+button,.button{border:0;border-radius:8px;padding:10px 15px;background:var(--navy);color:white;font-weight:700;cursor:pointer;text-decoration:none;white-space:nowrap}.secondary{background:var(--blue)}button:disabled{opacity:.45;cursor:not-allowed}
+#message{display:block;margin-top:12px;font-weight:650}.error{color:var(--danger)}.ok{color:var(--success)}.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:22px}.metric{padding:17px;border:1px solid var(--line);border-radius:10px;background:#fff}.metric strong{display:block;color:var(--navy);font-size:25px}.metric span{color:var(--muted)}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:20px}table{width:100%;border-collapse:collapse;background:white}th,td{padding:10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}th{color:var(--navy);background:#f7f9fb;font-size:13px}.table-wrap{overflow:auto;border:1px solid var(--line);border-radius:9px}.empty{color:var(--muted);font-style:italic}.links{margin-top:24px}.links a{color:var(--blue);margin-right:18px}#report[hidden]{display:none}
+@media(max-width:820px){.form,.metrics,.two{grid-template-columns:1fr}.top{display:block}.top .button{display:inline-block;margin-top:12px}}
+</style></head><body><main><section class="card"><div class="top"><div><h1>Quarterly Service Report</h1><p class="sub">Built from approved stored service events.</p></div><a class="button secondary" href="/">Home</a></div>
+<form id="report-form" class="form"><label>Year<input id="year" type="number" min="2020" max="2100" required></label><label>Quarter<select id="quarter"><option value="1">Q1</option><option value="2">Q2</option><option value="3">Q3</option><option value="4">Q4</option></select></label><label>Working hours basis<input id="hours" type="number" min="0.01" step="0.01" value="504" required></label><button id="generate" type="submit">Generate report</button></form>
+<span id="message" role="status"></span><section id="report" hidden><div class="metrics"><div class="metric"><strong id="events">0</strong><span>Events in period</span></div><div class="metric"><strong id="unplanned">0.00</strong><span>Unplanned downtime (h)</span></div><div class="metric"><strong id="uptime">-</strong><span>Uptime</span></div><div class="metric"><strong id="total">0.00</strong><span>Total reported downtime (h)</span></div></div>
+<div class="two"><section><h2>Service types</h2><div class="table-wrap"><table><thead><tr><th>Type</th><th>Count</th><th>Downtime</th></tr></thead><tbody id="service-types"></tbody></table></div></section><section><h2>Fault categories</h2><div class="table-wrap"><table><thead><tr><th>Category</th><th>Count</th><th>Downtime</th></tr></thead><tbody id="faults"></tbody></table></div></section></div>
+<h2>Interventions</h2><div class="table-wrap"><table><thead><tr><th>Intervention</th><th>Count</th><th>Downtime</th></tr></thead><tbody id="interventions"></tbody></table></div>
+<h2>Incidents</h2><div class="table-wrap"><table><thead><tr><th>Work order</th><th>Date</th><th>Asset</th><th>Type</th><th>Issue</th><th>Intervention</th><th>Downtime</th></tr></thead><tbody id="incidents"></tbody></table></div>
+<div class="two"><section><h2>Parts used</h2><div class="table-wrap"><table><thead><tr><th>Part</th><th>Description</th><th>Qty</th><th>Work orders</th></tr></thead><tbody id="parts"></tbody></table></div></section><section><h2>Repeat issues</h2><div class="table-wrap"><table><thead><tr><th>Asset</th><th>Issue</th><th>Count</th><th>Work orders</th></tr></thead><tbody id="repeats"></tbody></table></div></section></div>
+<h2>Review notes</h2><ul id="notes"></ul><button id="pdf" type="button">Download PDF</button></section><div class="links"><a href="/batch-upload">Batch upload</a><a href="/review">Review events</a><a href="/docs">API documentation</a></div></section></main>
+<script>
+const form=document.getElementById('report-form'),message=document.getElementById('message'),report=document.getElementById('report'),generate=document.getElementById('generate'),pdf=document.getElementById('pdf');
+const now=new Date();document.getElementById('year').value=now.getFullYear();document.getElementById('quarter').value=String(Math.floor(now.getMonth()/3)+1);
+let lastRequest=null;function msg(text,kind=''){message.textContent=text;message.className=kind}
+function body(){return{year:Number(document.getElementById('year').value),quarter:Number(document.getElementById('quarter').value),working_hours_basis:document.getElementById('hours').value}}
+function cell(row,value){const td=document.createElement('td');td.textContent=value??'-';row.append(td)}
+function rows(id,data,columns,empty){const tbody=document.getElementById(id);tbody.replaceChildren();if(!data.length){const tr=document.createElement('tr'),td=document.createElement('td');td.colSpan=columns.length;td.textContent=empty;td.className='empty';tr.append(td);tbody.append(tr);return}data.forEach(item=>{const tr=document.createElement('tr');columns.forEach(column=>cell(tr,typeof column==='function'?column(item):item[column]));tbody.append(tr)})}
+function render(data){document.getElementById('events').textContent=data.events_in_period;document.getElementById('unplanned').textContent=data.unplanned_downtime_hours;document.getElementById('uptime').textContent=data.uptime_percent===null?'-':data.uptime_percent+'%';document.getElementById('total').textContent=data.total_reported_downtime_hours;
+rows('service-types',data.service_type_breakdown,['label','count','downtime_hours'],'No service events in this period.');rows('faults',data.fault_category_breakdown,['label','count','downtime_hours'],'No fault categories.');rows('interventions',data.intervention_breakdown,['label','count','downtime_hours'],'No interventions recorded.');
+rows('incidents',data.incidents,['work_order_number',x=>x.service_date?new Date(x.service_date).toLocaleString():'-','asset_id','service_type','issue','intervention','downtime_hours'],'No incidents in this period.');rows('parts',data.parts_used,['part_number','description','quantity',x=>x.work_order_numbers.join(', ')],'No parts recorded.');rows('repeats',data.repeat_issues,['asset_id','issue','occurrences',x=>x.work_order_numbers.join(', ')],'No repeat issues detected.');
+const notes=document.getElementById('notes');notes.replaceChildren();(data.review_notes.length?data.review_notes:['No review notes.']).forEach(value=>{const li=document.createElement('li');li.textContent=value;notes.append(li)});report.hidden=false}
+form.addEventListener('submit',async event=>{event.preventDefault();generate.disabled=true;report.hidden=true;msg('Generating report...');lastRequest=body();try{const response=await fetch('/v1/reports/quarterly/stored',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(lastRequest)});const data=await response.json();if(!response.ok)throw new Error(data.detail||`HTTP ${response.status}`);render(data);msg(`${data.period.label} report generated.`,'ok')}catch(error){msg(error.message,'error')}finally{generate.disabled=false}});
+pdf.addEventListener('click',async()=>{if(!lastRequest)return;pdf.disabled=true;msg('Preparing PDF...');try{const response=await fetch('/v1/reports/quarterly/stored/pdf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(lastRequest)});if(!response.ok){const data=await response.json();throw new Error(data.detail||`HTTP ${response.status}`)}const blob=await response.blob(),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`service-report-Q${lastRequest.quarter}-${lastRequest.year}.pdf`;a.click();URL.revokeObjectURL(url);msg('PDF downloaded.','ok')}catch(error){msg(error.message,'error')}finally{pdf.disabled=false}});
+</script></body></html>"""

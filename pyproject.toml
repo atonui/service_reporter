@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "service-intelligence"
+version = "0.10.0"
+description = "Auditable work-order extraction and service reporting backend"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115,<1",
+  "openai>=2.0,<3",
+  "pillow>=11,<13",
+  "pydantic>=2.10,<3",
+  "pypdf[crypto]>=5.1,<7",
+  "pypdfium2>=4.30,<5",
+  "python-multipart>=0.0.20,<1",
+  "reportlab>=4.2,<5",
+  "uvicorn[standard]>=0.34,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "httpx>=0.28,<1",
+  "pytest>=8.3,<9",
+  "reportlab>=4.2,<5",
+  "ruff>=0.9,<1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["backend/app"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["backend/tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

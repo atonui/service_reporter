@@ -1,0 +1,83 @@
+{
+  "schema_version": "0.1",
+  "source_document": {
+    "file_name": "WO-004479870_V1.pdf",
+    "document_type": "work_order",
+    "page_count": 2
+  },
+  "identification": {
+    "work_order_number": "WO-004479870",
+    "case_number": "05725248",
+    "service_date": "2026-08-01T08:00:00"
+  },
+  "customer_site": {
+    "customer_name": "Kenyatta University Teaching, Referral and Research Hospital",
+    "site_name": "Kenyatta University Teaching, Referral and Research Hospital",
+    "address": "Northern Bypass Rd., Nairobi, Kenya",
+    "contact_person": "Robert Murimi"
+  },
+  "machine": {"asset_id": "H296293"},
+  "classification": {
+    "service_type": "corrective_breakdown",
+    "raw_subject": "MLC Interlocks",
+    "fault_category": "Interlock",
+    "fault_subcategory": "MLC",
+    "fault_codes": [],
+    "status": "complete"
+  },
+  "timing": {
+    "timezone": "Africa/Nairobi",
+    "malfunction_start": "2026-08-01T08:00:00",
+    "time_in": "2026-08-01T10:00:00",
+    "time_out": "2026-08-01T12:30:00",
+    "machine_release": "2026-08-01T12:30:00",
+    "reported_downtime_hours": null,
+    "travel_hours": "2.00",
+    "site_hours": "2.50",
+    "total_work_hours": "4.50"
+  },
+  "diagnosis": {
+    "symptoms": ["MLC interlocks"],
+    "observations": [],
+    "diagnostic_steps": [],
+    "root_cause": null
+  },
+  "intervention": {
+    "raw_closure_summary": "Replaced tnuts and motors on leaves A60 and A02. Replaced motor on leaf A29.",
+    "normalized_summary": "Replaced t-nuts and motors on leaves A60 and A02, and a motor on leaf A29.",
+    "activities": [
+      {"raw_type": "Wait-time", "normalized_type": "wait", "start": "2026-08-01T10:00:00", "end": "2026-08-01T11:15:00", "reported_hours": "1.25"},
+      {"raw_type": "Investigate/Trouble Shoot", "normalized_type": "troubleshoot", "start": "2026-08-01T11:15:00", "end": "2026-08-01T11:45:00", "reported_hours": "0.50"},
+      {"raw_type": "Replace", "normalized_type": "replace", "start": "2026-08-01T11:45:00", "end": "2026-08-01T12:15:00", "reported_hours": "0.50"},
+      {"raw_type": "Monitor Operation", "normalized_type": "monitor", "start": "2026-08-01T12:15:00", "end": "2026-08-01T12:30:00", "reported_hours": "0.25"}
+    ],
+    "resolution": null,
+    "resolution_status": "unknown"
+  },
+  "parts": [
+    {"part_number": "110661104", "raw_description": "SOLID NUT, FULL", "quantity": 2, "source": "C - Customer Spares"},
+    {"part_number": "110518212", "raw_description": "DRIVE MOTOR HALF LEAF", "quantity": 1, "source": "C - Customer Spares"},
+    {"part_number": "110536013", "raw_description": "DRIVE MOTOR FULL LEAF", "quantity": 2, "source": "C - Customer Spares"}
+  ],
+  "follow_ups": [],
+  "personnel": {
+    "service_resources": ["Allan Tonui"],
+    "customer_signatory": "Robert Murimi Martin"
+  },
+  "handover": {
+    "customer_signed": true,
+    "customer_signed_at": "2026-08-07T16:00:29+03:00",
+    "engineer_signed": true,
+    "engineer_signed_at": "2026-08-03T10:51:49+03:00",
+    "quality_statement": "Customer is responsible for all calibration verifications."
+  },
+  "evidence": [
+    {"field_path": "identification.work_order_number", "page": 1, "source_section": "Work Order Information", "raw_text": "Work Order Number WO-004479870", "confidence": "high", "method": "direct"},
+    {"field_path": "classification.raw_subject", "page": 1, "source_section": "Work Order Comments", "raw_text": "Subject MLC Interlocks", "confidence": "high", "method": "direct"},
+    {"field_path": "timing.malfunction_start", "page": 1, "source_section": "Work Order Times", "raw_text": "Malfunction Start: 8/1/2026 8:00 AM", "confidence": "high", "method": "direct"},
+    {"field_path": "timing.machine_release", "page": 1, "source_section": "Work Order Times", "raw_text": "Machine Release: 8/1/2026 12:30 PM", "confidence": "high", "method": "direct"},
+    {"field_path": "intervention.raw_closure_summary", "page": 1, "source_section": "Work Order Comments", "raw_text": "Replaced tnuts and motors on leaves A60 and A02. Replaced motor on leaf A29.", "confidence": "high", "method": "direct"}
+  ],
+  "computed": {}
+}
+
