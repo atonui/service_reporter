@@ -67,10 +67,25 @@ class CustomerSite(StrictModel):
 
 
 class Machine(StrictModel):
+    pcsn: str | None = Field(default=None, pattern=r"^[A-Za-z0-9]+$")
+    product_code: str | None = Field(default=None, pattern=r"^[A-Za-z0-9]+$")
+    # Retained for backward compatibility with events extracted before PCSN was formalized.
     asset_id: str | None = None
     manufacturer: str | None = None
     model: str | None = None
     serial_number: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def synchronize_legacy_asset_id(cls, value):
+        if not isinstance(value, dict):
+            return value
+        result = dict(value)
+        if not result.get("pcsn") and result.get("asset_id"):
+            result["pcsn"] = result["asset_id"]
+        if not result.get("asset_id") and result.get("pcsn"):
+            result["asset_id"] = result["pcsn"]
+        return result
 
 
 class ServiceClassification(StrictModel):

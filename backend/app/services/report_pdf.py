@@ -155,16 +155,18 @@ def render_quarterly_report_pdf(report: QuarterlyReport) -> bytes:
 
     metrics = [
         (report.events_in_period, "Events in period"),
+        (report.machine_count, "Machines"),
+        (f"{_value(report.working_hours_basis)} h", "Fleet basis"),
         (f"{report.unplanned_downtime_hours} h", "Unplanned downtime"),
         (f"{report.total_reported_downtime_hours} h", "Reported downtime"),
-        (f"{report.uptime_percent}%" if report.uptime_percent is not None else "-", "Uptime"),
+        (f"{report.uptime_percent}%" if report.uptime_percent is not None else "-", "Fleet uptime"),
     ]
     metric_table = Table(
         [
             [Paragraph(str(value), styles["Metric"]) for value, _ in metrics],
             [Paragraph(label, styles["MetricLabel"]) for _, label in metrics],
         ],
-        colWidths=[45 * mm] * 4,
+        colWidths=[30 * mm] * 6,
     )
     metric_table.setStyle(
         TableStyle(
@@ -178,6 +180,48 @@ def render_quarterly_report_pdf(report: QuarterlyReport) -> bytes:
         )
     )
     story.extend([metric_table, Spacer(1, 2 * mm)])
+
+    if report.machine_breakdown:
+        machine_rows: list[list[object]] = [
+            ["PCSN", "Product", "Model", "Site", "Events", "Downtime", "Basis", "Uptime"]
+        ]
+        machine_rows.extend(
+            [
+                item.pcsn,
+                item.product_code or "-",
+                item.model or "-",
+                item.site_name,
+                item.event_count,
+                item.unplanned_downtime_hours,
+                _value(item.working_hours_basis),
+                f"{item.uptime_percent}%" if item.uptime_percent is not None else "-",
+            ]
+            for item in report.machine_breakdown
+        )
+        story.extend(
+            section(
+                "Machine Availability",
+                machine_rows,
+                [20 * mm, 15 * mm, 27 * mm, 48 * mm, 14 * mm, 19 * mm, 18 * mm, 19 * mm],
+            )
+        )
+
+    if report.site_breakdown:
+        site_rows: list[list[object]] = [
+            ["Site", "Machines", "Events", "Downtime (h)", "Basis (h)", "Uptime"]
+        ]
+        site_rows.extend(
+            [
+                item.site_name,
+                item.machine_count,
+                item.event_count,
+                item.unplanned_downtime_hours,
+                _value(item.working_hours_basis),
+                f"{item.uptime_percent}%" if item.uptime_percent is not None else "-",
+            ]
+            for item in report.site_breakdown
+        )
+        story.extend(section("Site Availability", site_rows, [75 * mm, 20 * mm, 20 * mm, 25 * mm, 20 * mm, 20 * mm]))
 
     breakdown_rows: list[list[object]] = [["Service type", "Events", "Downtime (h)"]]
     breakdown_rows.extend(
@@ -201,18 +245,19 @@ def render_quarterly_report_pdf(report: QuarterlyReport) -> bytes:
         story.extend(section("Interventions", intervention_rows, [120 * mm, 25 * mm, 35 * mm]))
 
     incident_rows: list[list[object]] = [
-        ["Work order", "Date", "Asset", "Issue and intervention", "Downtime"]
+        ["Work order", "Date", "PCSN", "Issue and intervention", "Downtime", "Uptime impact"]
     ]
     incident_rows.extend(
         [
             item.work_order_number,
             item.service_date.date().isoformat() if item.service_date else "-",
-            _value(item.asset_id),
+            _value(item.pcsn),
             Paragraph(
                 f"<b>{escape(_value(item.issue))}</b><br/>{escape(_value(item.intervention))}",
                 styles["Cell"],
             ),
             f"{_value(item.downtime_hours)} h",
+            "Yes" if item.included_in_uptime else "No",
         ]
         for item in report.incidents
     )
@@ -220,7 +265,7 @@ def render_quarterly_report_pdf(report: QuarterlyReport) -> bytes:
         section(
             "Incidents",
             incident_rows,
-            [28 * mm, 22 * mm, 22 * mm, 86 * mm, 22 * mm],
+            [27 * mm, 20 * mm, 19 * mm, 72 * mm, 20 * mm, 22 * mm],
         )
     )
 
@@ -233,9 +278,9 @@ def render_quarterly_report_pdf(report: QuarterlyReport) -> bytes:
         story.extend(section("Parts Used", part_rows, [32 * mm, 85 * mm, 23 * mm, 40 * mm]))
 
     if report.repeat_issues:
-        repeat_rows: list[list[object]] = [["Asset", "Issue", "Occurrences", "Downtime (h)"]]
+        repeat_rows: list[list[object]] = [["PCSN", "Issue", "Occurrences", "Downtime (h)"]]
         repeat_rows.extend(
-            [item.asset_id or "-", item.issue, item.occurrences, item.downtime_hours]
+            [item.pcsn or "-", item.issue, item.occurrences, item.downtime_hours]
             for item in report.repeat_issues
         )
         story.extend(section("Repeat Issues", repeat_rows, [32 * mm, 95 * mm, 25 * mm, 28 * mm]))

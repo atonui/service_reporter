@@ -23,5 +23,13 @@ Convert one work-order document into exactly one `ServiceEvent` object that conf
 - `other`: supported activity that fits none of the above.
 - `unknown`: the source does not establish the service type.
 
-The JSON Schema returned by `GET /v1/service-events/schema` is authoritative.
+## Machine identity guidance
 
+- `machine.pcsn` is the globally unique identifier of the top-level machine reported on the work order.
+- A PCSN contains letters and numbers only.
+- Do not confuse the machine PCSN with a subcomponent asset identifier.
+- Do not guess the product-code boundary from character position; product-code lengths vary.
+- Known mappings are `H19` = TrueBeam Platform, `HAL` = Halcyon, and `H29` = Clinac.
+- If the prefix is unknown, preserve the full PCSN and leave product code, serial number, and model null unless the document supports them.
+
+The JSON Schema returned by `GET /v1/service-events/schema` is authoritative.

@@ -19,6 +19,7 @@ from backend.app.schemas.service_event import (
 )
 from backend.app.services.review import review_event
 from backend.app.services.validation import derive_metrics
+from backend.app.services.machine_identity import pcsn_details
 
 DEFAULT_MODEL = "gpt-4o-mini"
 DEFAULT_MAX_OUTPUT_TOKENS = 16_000
@@ -39,6 +40,10 @@ claims; keep each source quote under 240 characters; and do not repeat document 
 summaries. Prefer null or an empty list to speculative detail.
 Return only one valid JSON object. Omit fields that are absent rather than inventing values.
 Do not include source_document or computed; the application supplies those trusted fields.
+machine.pcsn is the globally unique top-level machine identifier labelled Asset on these work
+orders. Do not confuse it with a subcomponent. PCSNs contain letters and numbers only. Product-code
+length varies: known prefixes are H19=TrueBeam Platform, HAL=Halcyon, and H29=Clinac. Preserve an
+unknown full PCSN without guessing where its product code ends.
 Put event fields directly at the top level. Do not wrap them in `service_event`, `event`,
 `data`, or any other enclosing key.
 Use these top-level objects exactly: identification, customer_site, machine, classification,
@@ -256,7 +261,9 @@ def _canonicalize_model_payload(payload: Any) -> Any:
             "contact_person": payload.get("contact_person"),
         },
         "machine": {
-            "asset_id": payload.get("asset_id") or payload.get("machine_id"),
+            "pcsn": payload.get("pcsn") or payload.get("asset_id") or payload.get("machine_id"),
+            "product_code": payload.get("product_code"),
+            "asset_id": payload.get("asset_id") or payload.get("pcsn") or payload.get("machine_id"),
             "manufacturer": payload.get("manufacturer"),
             "model": payload.get("model") or payload.get("machine_model"),
             "serial_number": payload.get("serial_number"),
@@ -338,8 +345,8 @@ def _canonicalize_nested_payload(payload: dict[str, Any]) -> dict[str, Any]:
         )
     result["machine"] = object_with_aliases(
         "machine",
-        {"type": "model", "machine_type": "model", "id": "asset_id", "serial": "serial_number"},
-        {"asset_id", "manufacturer", "model", "serial_number"},
+        {"type": "model", "machine_type": "model", "id": "pcsn", "asset": "pcsn", "serial": "serial_number"},
+        {"pcsn", "product_code", "asset_id", "manufacturer", "model", "serial_number"},
     )
     result["classification"] = object_with_aliases(
         "classification",
@@ -525,7 +532,7 @@ def _labelled_document_facts(document: ParsedDocument) -> list[tuple[str, str, s
         patterns = {
             "identification.work_order_number": r"(?P<value>WO-\d+)\s*Work\s*Order",
             "identification.case_number": r"(?P<value>\d{6,})\s*Case\s*WO-\d+",
-            "machine.asset_id": r"(?P<value>[A-Z]\d{5,})\s*Asset\b",
+            "machine.pcsn": r"(?P<value>[A-Z]{1,4}\d{3,})\s*Asset\b",
             "classification.raw_subject": r"(?P<value>[^\n]{1,200}?)\s*Subject\b",
         }
         for field_path, pattern in patterns.items():
@@ -690,6 +697,15 @@ def _apply_labelled_document_facts(event: ServiceEvent, document: ParsedDocument
             evidence_paths.add(field_path)
 
     timing = payload["timing"]
+
+    machine = payload["machine"]
+    identity = pcsn_details(machine.get("pcsn") or machine.get("asset_id"))
+    if identity["pcsn"]:
+        machine["pcsn"] = identity["pcsn"]
+        machine["asset_id"] = identity["pcsn"]
+    for field in ("product_code", "serial_number", "model"):
+        if not machine.get(field) and identity[field]:
+            machine[field] = identity[field]
     total_work_hours = timing.get("total_work_hours")
     travel_hours = timing.get("travel_hours")
     site_hours = timing.get("site_hours")

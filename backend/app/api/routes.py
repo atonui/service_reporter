@@ -480,6 +480,10 @@ def _build_stored_quarterly_report(request: StoredQuarterlyReportRequest) -> Qua
             year=request.year,
             quarter=request.quarter,
             working_hours_basis=request.working_hours_basis,
+            working_hours_per_machine=request.working_hours_per_machine,
+            machine_hours_overrides=request.machine_hours_overrides,
+            site_name=request.site_name,
+            pcsn=request.pcsn,
             events=events,
         )
     )
