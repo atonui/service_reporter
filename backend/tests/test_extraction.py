@@ -8,7 +8,9 @@ import pytest
 from backend.app.schemas.document import ExtractedPage, ParsedDocument
 from backend.app.services.extraction import (
     ExtractionError,
+    _apply_labelled_document_facts,
     _canonicalize_model_payload,
+    _service_type,
     _source_timestamp,
     extract_service_event,
 )
@@ -173,6 +175,24 @@ def test_flattens_structured_address_and_parses_day_first_source_dates() -> None
     )
     assert _source_timestamp("26/02/2026 10:05") == "2026-02-26T10:05:00+03:00"
     assert _source_timestamp("8/27/2026 1:30 PM") == "2026-08-27T13:30:00+03:00"
+
+
+def test_pmp_and_pmi_are_preventive_and_known_pcsn_supplies_site() -> None:
+    assert _service_type("PMP") == "preventive_maintenance"
+    assert _service_type("PMI") == "preventive_maintenance"
+    payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    payload["machine"]["pcsn"] = payload["machine"]["asset_id"] = "H194931"
+    payload["customer_site"]["site_name"] = "Unknown"
+    payload["customer_site"]["customer_name"] = None
+    payload["classification"]["service_type"] = "corrective_breakdown"
+    event = ServiceEvent.model_validate(payload)
+    document = source_document()
+    document.pages[0].text += "\nPurpose of Visit: PMI\n"
+
+    corrected = _apply_labelled_document_facts(event, document)
+
+    assert corrected.customer_site.site_name == "Garissa County Referral Hospital"
+    assert corrected.classification.service_type.value == "preventive_maintenance"
 
 
 def test_recovers_labelled_timestamps_and_repair_summary_when_model_omits_them(monkeypatch) -> None:

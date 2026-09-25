@@ -19,7 +19,7 @@ from backend.app.schemas.service_event import (
 )
 from backend.app.services.review import review_event
 from backend.app.services.validation import derive_metrics
-from backend.app.services.machine_identity import pcsn_details
+from backend.app.services.machine_identity import pcsn_details, site_name_for_pcsn
 
 DEFAULT_MODEL = "gpt-4o-mini"
 DEFAULT_MAX_OUTPUT_TOKENS = 16_000
@@ -139,7 +139,7 @@ def _service_type(value: Any) -> str:
     if not isinstance(value, str):
         return "unknown"
     normalized = value.lower().replace("-", "_").replace(" ", "_")
-    if "prevent" in normalized or normalized == "pm":
+    if "prevent" in normalized or normalized in {"pm", "pmp", "pmi"}:
         return "preventive_maintenance"
     if "correct" in normalized or "breakdown" in normalized or "repair" in normalized:
         return "corrective_breakdown"
@@ -706,6 +706,41 @@ def _apply_labelled_document_facts(event: ServiceEvent, document: ParsedDocument
     for field in ("product_code", "serial_number", "model"):
         if not machine.get(field) and identity[field]:
             machine[field] = identity[field]
+
+    customer_site = payload["customer_site"]
+    known_site = site_name_for_pcsn(identity["pcsn"])
+    current_site = customer_site.get("site_name")
+    if known_site and (
+        not current_site or str(current_site).strip().casefold() in {"unknown", "unknown site", "n/a"}
+    ):
+        customer_site["site_name"] = known_site
+
+    document_text = "\n".join(page.text for page in document.pages)
+    preventive_match = re.search(
+        r"\b(?:PMP|PMI|preventive maintenance|planned maintenance)\b",
+        document_text,
+        flags=re.IGNORECASE,
+    )
+    if preventive_match:
+        payload["classification"]["service_type"] = "preventive_maintenance"
+        field_path = "classification.service_type"
+        if field_path not in evidence_paths:
+            source_page = next(
+                page.page_number
+                for page in document.pages
+                if preventive_match.group(0).casefold() in page.text.casefold()
+            )
+            payload["evidence"].append(
+                {
+                    "field_path": field_path,
+                    "page": source_page,
+                    "source_section": "Work Order Information",
+                    "raw_text": preventive_match.group(0),
+                    "confidence": "high",
+                    "method": "normalized",
+                }
+            )
+            evidence_paths.add(field_path)
     total_work_hours = timing.get("total_work_hours")
     travel_hours = timing.get("travel_hours")
     site_hours = timing.get("site_hours")

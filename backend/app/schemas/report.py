@@ -36,6 +36,11 @@ class StoredQuarterlyReportRequest(StrictModel):
         return self.working_hours_per_machine or self.working_hours_basis
 
 
+class ReportFilterOptions(StrictModel):
+    sites: list[str]
+    pcsns: list[str]
+
+
 class ReportPeriod(StrictModel):
     label: str
     start_date: date

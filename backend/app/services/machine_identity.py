@@ -8,6 +8,12 @@ PRODUCT_CATALOG: dict[str, str] = {
     "HAL": "Halcyon",
 }
 
+# Machines are stationary in the current business model. This catalogue also repairs
+# historical events whose work-order extraction omitted the site name.
+MACHINE_SITE_CATALOG: dict[str, str] = {
+    "H194931": "Garissa County Referral Hospital",
+}
+
 
 def normalize_pcsn(value: str | None) -> str | None:
     if not value:
@@ -36,3 +42,8 @@ def pcsn_details(value: str | None) -> dict[str, str | None]:
         "serial_number": serial,
         "model": PRODUCT_CATALOG[prefix],
     }
+
+
+def site_name_for_pcsn(value: str | None) -> str | None:
+    pcsn = normalize_pcsn(value)
+    return MACHINE_SITE_CATALOG.get(pcsn) if pcsn else None

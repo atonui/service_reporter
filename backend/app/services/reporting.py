@@ -13,25 +13,45 @@ from backend.app.schemas.report import (
     QuarterlyIncident,
     QuarterlyReport,
     QuarterlyReportRequest,
+    ReportFilterOptions,
     RepeatIssue,
     ReportPeriod,
     SiteAvailability,
 )
 from backend.app.schemas.service_event import ServiceEvent
-from backend.app.services.machine_identity import normalize_pcsn, pcsn_details
+from backend.app.services.machine_identity import normalize_pcsn, pcsn_details, site_name_for_pcsn
 
 ZERO = Decimal("0.00")
 UNPLANNED_TYPES = {"corrective_breakdown"}
+PREVENTIVE_PATTERN = re.compile(
+    r"\b(?:PMP|PMI|preventive maintenance|planned maintenance)\b", re.IGNORECASE
+)
 
 
 def _q(value: Decimal | int | str) -> Decimal:
     return Decimal(value).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
+def _effective_service_type(event: ServiceEvent) -> str:
+    """Protect reporting from older events that labelled explicit PMP/PMI work corrective."""
+    source_values = [
+        event.classification.raw_subject,
+        event.classification.fault_category,
+        event.classification.fault_subcategory,
+        event.intervention.raw_closure_summary,
+        event.intervention.normalized_summary,
+        *(activity.raw_type for activity in event.intervention.activities),
+        *(item.raw_text for item in event.evidence),
+    ]
+    if any(PREVENTIVE_PATTERN.search(value) for value in source_values if value):
+        return "preventive_maintenance"
+    return event.classification.service_type.value
+
+
 def _event_date(event: ServiceEvent) -> datetime | None:
     if event.identification.service_date:
         return event.identification.service_date
-    if event.classification.service_type.value == "corrective_breakdown":
+    if _effective_service_type(event) == "corrective_breakdown":
         return event.timing.malfunction_start or event.timing.time_in or event.timing.machine_release
     return event.timing.time_in or event.timing.machine_release or event.timing.malfunction_start
 
@@ -39,7 +59,7 @@ def _event_date(event: ServiceEvent) -> datetime | None:
 def _downtime(event: ServiceEvent) -> Decimal | None:
     if event.timing.reported_downtime_hours is not None:
         return event.timing.reported_downtime_hours
-    if event.classification.service_type.value != "corrective_breakdown":
+    if _effective_service_type(event) != "corrective_breakdown":
         return None
     if event.computed.downtime_hours is not None:
         return event.computed.downtime_hours
@@ -54,7 +74,24 @@ def _pcsn(event: ServiceEvent) -> str | None:
 
 
 def _site_name(event: ServiceEvent) -> str:
-    return event.customer_site.site_name or event.customer_site.customer_name or "Unknown site"
+    for value in (
+        event.customer_site.site_name,
+        site_name_for_pcsn(_pcsn(event)),
+        event.customer_site.customer_name,
+    ):
+        if value and value.strip().casefold() not in {"unknown", "unknown site", "n/a"}:
+            return value.strip()
+    return "Unknown site"
+
+
+def report_filter_options(events: list[ServiceEvent]) -> ReportFilterOptions:
+    """Return canonical filter suggestions while keeping the UI inputs editable."""
+    sites = sorted(
+        {_site_name(event) for event in events if _site_name(event) != "Unknown site"},
+        key=str.casefold,
+    )
+    pcsns = sorted({pcsn for event in events if (pcsn := _pcsn(event))})
+    return ReportFilterOptions(sites=sites, pcsns=pcsns)
 
 
 def _site_key(value: str) -> str:
@@ -118,8 +155,9 @@ def build_quarterly_report(request: QuarterlyReportRequest) -> QuarterlyReport:
             notes.append(f"{event.identification.work_order_number}: downtime is unavailable.")
         else:
             total_downtime += downtime_value
-        service_type = event.classification.service_type.value
+        service_type = _effective_service_type(event)
         unplanned = service_type in UNPLANNED_TYPES
+        impact_downtime_value = downtime_value if unplanned else ZERO
         if unplanned:
             unplanned_downtime += downtime_value
         pcsn = _pcsn(event)
@@ -133,21 +171,23 @@ def build_quarterly_report(request: QuarterlyReportRequest) -> QuarterlyReport:
                 f"{event.identification.work_order_number}: PCSN is unavailable; "
                 "the event is not included in a machine availability row."
             )
-        def add(bucket: dict[str, tuple[int, Decimal]], label: str) -> None:
+        def add(
+            bucket: dict[str, tuple[int, Decimal]], label: str, hours_to_add: Decimal
+        ) -> None:
             count, hours = bucket[label]
-            bucket[label] = (count + 1, hours + downtime_value)
-        add(service_types, service_type)
+            bucket[label] = (count + 1, hours + hours_to_add)
+        add(service_types, service_type, impact_downtime_value)
         category = event.classification.fault_category or "Unclassified"
-        add(fault_categories, category)
+        add(fault_categories, category, impact_downtime_value)
         intervention_group = event.intervention.normalized_summary or event.intervention.raw_closure_summary
         intervention_detail = event.intervention.raw_closure_summary or event.intervention.normalized_summary
         if intervention_group:
-            add(interventions, intervention_group)
+            add(interventions, intervention_group, impact_downtime_value)
         issue = event.classification.fault_subcategory or event.classification.fault_category or event.classification.raw_subject
         if issue:
             key = (pcsn, issue)
             count, hours, work_orders = issue_groups.get(key, (0, ZERO, []))
-            issue_groups[key] = (count + 1, hours + downtime_value, [*work_orders, event.identification.work_order_number])
+            issue_groups[key] = (count + 1, hours + impact_downtime_value, [*work_orders, event.identification.work_order_number])
         for part in event.parts:
             key = (part.part_number, part.normalized_description or part.raw_description)
             quantity, work_orders = parts.get(key, (Decimal(0), set()))

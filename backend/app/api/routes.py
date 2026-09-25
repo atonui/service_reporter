@@ -9,6 +9,7 @@ from backend.app.schemas.extraction import BatchExtractionItem, BatchExtractionR
 from backend.app.schemas.report import (
     QuarterlyReport,
     QuarterlyReportRequest,
+    ReportFilterOptions,
     StoredQuarterlyReportRequest,
 )
 from backend.app.schemas.service_event import ServiceEvent
@@ -28,7 +29,7 @@ from backend.app.services.pdf_parser import (
     PdfValidationError,
     parse_pdf_bytes_with_ocr,
 )
-from backend.app.services.reporting import build_quarterly_report
+from backend.app.services.reporting import build_quarterly_report, report_filter_options
 from backend.app.services.event_store import (
     approve_event,
     correct_event,
@@ -466,6 +467,12 @@ def approve_stored_service_event(event_id: int, request: EventApprovalRequest) -
 def stored_quarterly_report(request: StoredQuarterlyReportRequest) -> QuarterlyReport:
     """Build a report from all stored, report-ready service events."""
     return _build_stored_quarterly_report(request)
+
+
+@router.get("/v1/reports/filter-options", response_model=ReportFilterOptions)
+def stored_report_filter_options() -> ReportFilterOptions:
+    """List sites and PCSNs available for editable report filter controls."""
+    return report_filter_options(reportable_events())
 
 
 def _build_stored_quarterly_report(request: StoredQuarterlyReportRequest) -> QuarterlyReport:

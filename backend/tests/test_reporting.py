@@ -4,8 +4,8 @@ from decimal import Decimal
 from pathlib import Path
 
 from backend.app.schemas.report import QuarterlyReportRequest
-from backend.app.schemas.service_event import ServiceEvent
-from backend.app.services.reporting import build_quarterly_report
+from backend.app.schemas.service_event import ServiceEvent, ServiceType
+from backend.app.services.reporting import build_quarterly_report, report_filter_options
 
 FIXTURE = Path(__file__).parent / "fixtures" / "wo_004479870.json"
 
@@ -66,6 +66,27 @@ def test_preventive_event_uses_visit_date_and_does_not_infer_downtime() -> None:
     assert report.incidents[0].downtime_hours is None
 
 
+def test_preventive_reported_hours_do_not_reduce_uptime_or_downtime_breakdowns() -> None:
+    event = event_for(datetime(2026, 8, 4, 8), "WO-900000001")
+    event.classification.service_type = ServiceType.CORRECTIVE_BREAKDOWN
+    event.classification.raw_subject = "Quarterly PMI"
+    event.timing.reported_downtime_hours = Decimal("6.00")
+    event.computed.downtime_hours = Decimal("6.00")
+
+    report = build_quarterly_report(
+        QuarterlyReportRequest(
+            year=2026, quarter=3, working_hours_per_machine="504", events=[event]
+        )
+    )
+
+    assert report.total_reported_downtime_hours == Decimal("6.00")
+    assert report.unplanned_downtime_hours == Decimal("0.00")
+    assert report.uptime_percent == Decimal("100.00")
+    assert report.machine_breakdown[0].unplanned_downtime_hours == Decimal("0.00")
+    assert report.service_type_breakdown[0].downtime_hours == Decimal("0.00")
+    assert report.incidents[0].included_in_uptime is False
+
+
 def test_uptime_is_calculated_per_machine_then_weighted_upward() -> None:
     first = event_for(datetime(2026, 8, 1, 8), "WO-004479870")
     second = event_for(datetime(2026, 8, 15, 8), "WO-004479871")
@@ -114,3 +135,21 @@ def test_report_can_filter_by_site_and_pcsn() -> None:
     assert report.events_received == 1
     assert report.machine_count == 1
     assert report.machine_breakdown[0].pcsn == "H196237"
+
+
+def test_known_machine_site_repairs_unknown_site_and_populates_filter_options() -> None:
+    event = event_for(datetime(2026, 8, 1, 8), "WO-900000002")
+    event.machine.pcsn = event.machine.asset_id = "H194931"
+    event.customer_site.site_name = "Unknown"
+    event.customer_site.customer_name = None
+
+    report = build_quarterly_report(
+        QuarterlyReportRequest(
+            year=2026, quarter=3, working_hours_per_machine="504", events=[event]
+        )
+    )
+    choices = report_filter_options([event])
+
+    assert report.machine_breakdown[0].site_name == "Garissa County Referral Hospital"
+    assert choices.sites == ["Garissa County Referral Hospital"]
+    assert choices.pcsns == ["H194931"]

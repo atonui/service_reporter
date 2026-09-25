@@ -158,7 +158,7 @@ def render_quarterly_report_pdf(report: QuarterlyReport) -> bytes:
         (report.machine_count, "Machines"),
         (f"{_value(report.working_hours_basis)} h", "Fleet basis"),
         (f"{report.unplanned_downtime_hours} h", "Unplanned downtime"),
-        (f"{report.total_reported_downtime_hours} h", "Reported downtime"),
+        (f"{report.total_reported_downtime_hours} h", "Reported downtime (info)"),
         (f"{report.uptime_percent}%" if report.uptime_percent is not None else "-", "Fleet uptime"),
     ]
     metric_table = Table(
