@@ -77,16 +77,37 @@ def review_page() -> str:
     #events button.selected { border-color:var(--blue); background:var(--pale); }
     .badge { float:right; padding:2px 7px; border-radius:10px; font-size:12px; background:#ffe9b3; }
     .badge.approved { background:#d9f2e2; color:var(--success); }
-    textarea { width:100%; min-height:480px; resize:vertical; padding:12px; border:1px solid var(--line); border-radius:8px; font:13px/1.45 Consolas,monospace; }
-    input { width:100%; padding:9px; border:1px solid var(--line); border-radius:7px; }
-    .form { display:grid; grid-template-columns:1fr 2fr; gap:12px; margin:12px 0; }
+    input,select,textarea { width:100%; padding:9px; border:1px solid var(--line); border-radius:7px; background:white; color:var(--text); font:inherit; }
+    textarea { min-height:92px; resize:vertical; }
+    label { display:block; font-weight:700; color:var(--navy); }
+    .review-form { display:grid; gap:14px; }
+    .field-card { display:grid; grid-template-columns:minmax(260px,1fr) minmax(260px,.9fr); gap:16px; padding:15px; border:1px solid var(--line); border-radius:10px; background:#fff; }
+    .field-card:focus-within { border-color:var(--blue); box-shadow:0 0 0 2px rgba(40,120,181,.1); }
+    .hint { color:#647483; font-size:12px; font-weight:400; margin-top:4px; }
+    .evidence { background:#f6f8fa; border-left:3px solid var(--blue); border-radius:6px; padding:10px; min-height:64px; }
+    .evidence strong { display:block; color:var(--navy); font-size:12px; text-transform:uppercase; letter-spacing:.04em; }
+    .quote { margin:5px 0; white-space:pre-wrap; }
+    .meta { color:#647483; font-size:12px; }
+    .no-evidence { color:#7b8792; font-style:italic; }
+    .parts { border:1px solid var(--line); border-radius:10px; padding:15px; }
+    .parts-head { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:10px; }
+    .parts-head h3 { margin:0; color:var(--navy); }
+    .parts-table { width:100%; border-collapse:collapse; }
+    .parts-table th,.parts-table td { padding:7px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; }
+    .parts-table th { font-size:12px; color:var(--navy); background:#f7f9fb; }
+    .parts-table input { min-width:90px; }
+    .parts-table .description { min-width:220px; }
+    .remove { background:#8b2d2d; padding:8px 10px; }
+    .review-flags { margin:0 0 14px; padding:12px 16px 12px 32px; background:#fff8e5; border:1px solid #ead59b; border-radius:8px; }
+    .review-flags:empty { display:none; }
+    .form { display:grid; grid-template-columns:1fr 2fr; gap:12px; margin:16px 0 12px; }
     .actions { display:flex; gap:10px; align-items:center; }
     button { border:0; border-radius:8px; padding:10px 15px; background:var(--navy); color:white; font-weight:700; cursor:pointer; }
     button.secondary { background:var(--blue); } button:disabled { opacity:.45; cursor:not-allowed; }
     #message { font-weight:600; } .error { color:var(--danger); } .ok { color:var(--success); }
     details { margin-top:16px; } pre { white-space:pre-wrap; background:#f6f8fa; padding:12px; border-radius:8px; max-height:260px; overflow:auto; }
     .links { margin-top:18px; } .links a { color:var(--blue); margin-right:18px; }
-    @media (max-width:800px) { .layout,.form { grid-template-columns:1fr; } }
+    @media (max-width:900px) { .layout,.form,.field-card { grid-template-columns:1fr; } .parts-table { display:block; overflow:auto; } }
   </style>
 </head>
 <body><main><section class="card">
@@ -96,7 +117,16 @@ def review_page() -> str:
     <aside><h2>Saved events</h2><ul id="events"></ul></aside>
     <section>
       <h2 id="title">Select an event</h2>
-      <textarea id="editor" disabled aria-label="Service event JSON"></textarea>
+      <ul id="review-flags" class="review-flags"></ul>
+      <form id="field-editor" class="review-form" hidden>
+        <div class="field-card"><label>Customer<input id="customer" autocomplete="off"><span class="hint">Customer and site are one identity.</span></label><div id="evidence-customer" class="evidence"></div></div>
+        <div class="field-card"><label>PCSN<input id="pcsn" pattern="[A-Za-z0-9]+" autocomplete="off"></label><div id="evidence-pcsn" class="evidence"></div></div>
+        <div class="field-card"><label>Service type<select id="service-type"><option value="preventive_maintenance">Preventive maintenance</option><option value="corrective_breakdown">Corrective breakdown</option><option value="remote_support">Remote support</option><option value="customer_request">Customer request</option><option value="training">Training</option><option value="other">Other</option><option value="unknown">Unknown</option></select></label><div id="evidence-service-type" class="evidence"></div></div>
+        <div class="field-card"><label>Reported downtime (hours)<input id="downtime" type="number" min="0" step="0.01" placeholder="Not reported"><span class="hint">Only corrective-breakdown downtime reduces uptime.</span></label><div id="evidence-downtime" class="evidence"></div></div>
+        <div class="field-card"><label>Subject<textarea id="subject"></textarea></label><div id="evidence-subject" class="evidence"></div></div>
+        <div class="field-card"><label>Intervention<textarea id="intervention"></textarea><span class="hint">Use the source wording from the work order.</span></label><div id="evidence-intervention" class="evidence"></div></div>
+        <section class="parts"><div class="parts-head"><h3>Parts</h3><button id="add-part" type="button" class="secondary">Add part</button></div><div class="parts-table"><table><thead><tr><th>Part number</th><th>Description</th><th>Quantity</th><th>Source</th><th></th></tr></thead><tbody id="parts-body"></tbody></table></div><div id="evidence-parts" class="evidence"></div></section>
+      </form>
       <div class="form">
         <label>Reviewer<input id="actor" placeholder="Your name"></label>
         <label>Note (optional)<input id="note" placeholder="What was checked or corrected"></label>
@@ -113,15 +143,23 @@ def review_page() -> str:
 </section></main>
 <script>
   const list = document.getElementById('events');
-  const editor = document.getElementById('editor');
   const title = document.getElementById('title');
+  const fieldEditor = document.getElementById('field-editor');
+  const customer = document.getElementById('customer');
+  const pcsn = document.getElementById('pcsn');
+  const serviceType = document.getElementById('service-type');
+  const downtime = document.getElementById('downtime');
+  const subject = document.getElementById('subject');
+  const intervention = document.getElementById('intervention');
+  const partsBody = document.getElementById('parts-body');
+  const flags = document.getElementById('review-flags');
   const actor = document.getElementById('actor');
   const note = document.getElementById('note');
   const save = document.getElementById('save');
   const approve = document.getElementById('approve');
   const message = document.getElementById('message');
   const history = document.getElementById('history');
-  let selected = null;
+  let selected = null, dirty = false;
 
   function setMessage(text, kind='') { message.textContent=text; message.className=kind; }
   async function request(url, options={}) {
@@ -142,23 +180,86 @@ def review_page() -> str:
       if (record.id === selectId) selectRecord(record,button);
     });
   }
+  function evidenceItems(paths=[],prefixes=[]) {
+    if (!selected) return [];
+    return selected.event.evidence.filter(item=>paths.includes(item.field_path)||prefixes.some(prefix=>item.field_path.startsWith(prefix)));
+  }
+  function renderEvidence(id,paths=[],prefixes=[]) {
+    const target=document.getElementById(id); target.replaceChildren();
+    const heading=document.createElement('strong'); heading.textContent='Source evidence'; target.append(heading);
+    const items=evidenceItems(paths,prefixes);
+    if (!items.length) { const empty=document.createElement('div'); empty.className='no-evidence'; empty.textContent='No field-level evidence was recorded.'; target.append(empty); return; }
+    items.forEach(item=>{
+      const quote=document.createElement('div'); quote.className='quote'; quote.textContent='“'+item.raw_text+'”';
+      const meta=document.createElement('div'); meta.className='meta'; meta.textContent='Page '+item.page+(item.source_section?' · '+item.source_section:'')+' · '+item.confidence+' · '+item.method;
+      target.append(quote,meta);
+    });
+  }
+  function markDirty() { if (!selected) return; dirty=true; approve.disabled=true; setMessage('Unsaved corrections. Save before approval.'); }
+  function partRow(part={}) {
+    const tr=document.createElement('tr'); tr._part=part;
+    const fields=[['part_number',''],['raw_description','description'],['quantity',''],['source','']];
+    fields.forEach(([name,className])=>{const td=document.createElement('td'),input=document.createElement('input');input.dataset.field=name;input.value=part[name]??'';if(className)input.className=className;if(name==='quantity'){input.type='number';input.min='0.01';input.step='0.01';input.required=true}else if(name==='raw_description')input.required=true;input.addEventListener('input',markDirty);td.append(input);tr.append(td)});
+    const td=document.createElement('td'),remove=document.createElement('button');remove.type='button';remove.className='remove';remove.textContent='Remove';remove.onclick=()=>{tr.remove();markDirty()};td.append(remove);tr.append(td);partsBody.append(tr);
+  }
+  function renderParts(parts) { partsBody.replaceChildren(); parts.forEach(part=>partRow(part)); }
+  function collectParts() {
+    return [...partsBody.querySelectorAll('tr')].map(row=>{
+      const value={...(row._part||{})};
+      row.querySelectorAll('input').forEach(input=>{value[input.dataset.field]=input.dataset.field==='quantity'?input.value:input.value.trim()||null});
+      value.raw_description=value.raw_description||''; value.quantity=value.quantity||'1'; return value;
+    });
+  }
+  function renderFlags(record) {
+    flags.replaceChildren(); record.review_flags.forEach(flag=>{const li=document.createElement('li');li.textContent=(flag.field_path?flag.field_path+': ':'')+flag.message;flags.append(li)});
+  }
   function selectRecord(record, button) {
     selected=record; document.querySelectorAll('#events button').forEach(x=>x.classList.remove('selected')); button.classList.add('selected');
     title.textContent=record.event.identification.work_order_number+' — '+record.approval_status;
-    editor.value=JSON.stringify(record.event,null,2); editor.disabled=false; save.disabled=false; approve.disabled=false;
+    customer.value=record.event.customer_site.customer_name||record.event.customer_site.site_name||'';
+    pcsn.value=record.event.machine.pcsn||record.event.machine.asset_id||'';
+    serviceType.value=record.event.classification.service_type;
+    downtime.value=record.event.timing.reported_downtime_hours??'';
+    subject.value=record.event.classification.raw_subject||'';
+    intervention.value=record.event.intervention.raw_closure_summary||record.event.intervention.normalized_summary||'';
+    renderParts(record.event.parts); renderFlags(record);
+    renderEvidence('evidence-customer',['customer_site.customer_name','customer_site.site_name']);
+    renderEvidence('evidence-pcsn',['machine.pcsn','machine.asset_id']);
+    renderEvidence('evidence-service-type',['classification.service_type']);
+    renderEvidence('evidence-downtime',['timing.reported_downtime_hours']);
+    renderEvidence('evidence-subject',['classification.raw_subject']);
+    renderEvidence('evidence-intervention',['intervention.raw_closure_summary','intervention.normalized_summary'],['intervention.activities']);
+    renderEvidence('evidence-parts',[],['parts']);
+    dirty=false; fieldEditor.hidden=false; save.disabled=false; approve.disabled=false;
     history.textContent=JSON.stringify(record.correction_history,null,2); setMessage('');
+  }
+  function correctedEvent() {
+    if (!fieldEditor.reportValidity()) throw new Error('Correct the highlighted fields before saving.');
+    const event=JSON.parse(JSON.stringify(selected.event)),name=customer.value.trim()||null,identity=pcsn.value.trim().toUpperCase()||null;
+    event.customer_site.customer_name=name; event.customer_site.site_name=name;
+    event.machine.pcsn=identity; event.machine.asset_id=identity;
+    event.classification.service_type=serviceType.value;
+    event.timing.reported_downtime_hours=downtime.value===''?null:downtime.value;
+    event.classification.raw_subject=subject.value.trim()||null;
+    const changedIntervention=intervention.value.trim()!==(event.intervention.raw_closure_summary||event.intervention.normalized_summary||'');
+    event.intervention.raw_closure_summary=intervention.value.trim()||null;
+    if (changedIntervention) { event.intervention.normalized_summary=null; event.intervention.activities=[]; }
+    event.parts=collectParts(); return event;
   }
   async function act(kind) {
     if (!selected || !actor.value.trim()) { setMessage('Enter the reviewer name.','error'); return; }
     save.disabled=true; approve.disabled=true; setMessage(kind==='save'?'Saving...':'Approving...');
     try {
       const options={method:kind==='save'?'PUT':'POST',headers:{'Content-Type':'application/json'}};
-      if (kind==='save') options.body=JSON.stringify({event:JSON.parse(editor.value),corrected_by:actor.value.trim(),note:note.value.trim()||null});
+      if (kind==='save') options.body=JSON.stringify({event:correctedEvent(),corrected_by:actor.value.trim(),note:note.value.trim()||null});
       else options.body=JSON.stringify({approved_by:actor.value.trim(),note:note.value.trim()||null});
       const suffix=kind==='save'?'':'/approve'; await request('/v1/service-events/'+selected.id+suffix,options);
       await refresh(selected.id); setMessage(kind==='save'?'Correction saved; approval is still required.':'Approved and ready for reports.','ok');
-    } catch(error) { setMessage(error.message,'error'); save.disabled=false; approve.disabled=false; }
+    } catch(error) { setMessage(error.message,'error'); save.disabled=false; approve.disabled=dirty; }
   }
+  fieldEditor.addEventListener('input',markDirty);
+  fieldEditor.addEventListener('change',markDirty);
+  document.getElementById('add-part').onclick=()=>{partRow({quantity:'1'});markDirty()};
   save.onclick=()=>act('save'); approve.onclick=()=>act('approve');
   refresh().catch(error=>setMessage(error.message,'error'));
 </script></body></html>"""

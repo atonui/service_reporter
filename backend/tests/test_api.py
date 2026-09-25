@@ -53,6 +53,15 @@ def test_review_page_has_correction_and_approval_controls() -> None:
     assert response.status_code == 200
     assert "Save correction" in response.text
     assert "Approve for reports" in response.text
+    assert 'id="customer"' in response.text
+    assert 'id="pcsn"' in response.text
+    assert 'id="service-type"' in response.text
+    assert 'id="downtime"' in response.text
+    assert 'id="subject"' in response.text
+    assert 'id="intervention"' in response.text
+    assert 'id="parts-body"' in response.text
+    assert "Source evidence" in response.text
+    assert 'id="editor"' not in response.text
 
 
 def test_schema_is_exposed() -> None:
