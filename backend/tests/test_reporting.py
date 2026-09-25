@@ -118,8 +118,10 @@ def test_report_can_filter_by_site_and_pcsn() -> None:
     second = event_for(datetime(2026, 8, 15, 8), "WO-004479871")
     first.machine.pcsn = first.machine.asset_id = "H196237"
     second.machine.pcsn = second.machine.asset_id = "HAL1124"
-    first.customer_site.site_name = "Coast General Hospital"
-    second.customer_site.site_name = "Nakuru County Referral Hospital"
+    first.customer_site.customer_name = first.customer_site.site_name = "Coast General Hospital"
+    second.customer_site.customer_name = second.customer_site.site_name = (
+        "Nakuru County Referral Hospital"
+    )
 
     report = build_quarterly_report(
         QuarterlyReportRequest(

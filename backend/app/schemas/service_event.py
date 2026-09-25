@@ -65,6 +65,30 @@ class CustomerSite(StrictModel):
     address: str | None = None
     contact_person: str | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def synchronize_customer_and_site_name(cls, value):
+        """Customer and site are one business identity; retain both JSON keys for compatibility."""
+        if not isinstance(value, dict):
+            return value
+        result = dict(value)
+
+        def usable(item):
+            return (
+                item
+                if isinstance(item, str)
+                and item.strip()
+                and item.strip().casefold() not in {"unknown", "unknown site", "n/a"}
+                else None
+            )
+
+        canonical = usable(result.get("customer_name")) or usable(result.get("site_name"))
+        if canonical:
+            canonical = canonical.strip()
+            result["customer_name"] = canonical
+            result["site_name"] = canonical
+        return result
+
 
 class Machine(StrictModel):
     pcsn: str | None = Field(default=None, pattern=r"^[A-Za-z0-9]+$")

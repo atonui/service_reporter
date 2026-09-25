@@ -183,13 +183,12 @@ def render_quarterly_report_pdf(report: QuarterlyReport) -> bytes:
 
     if report.machine_breakdown:
         machine_rows: list[list[object]] = [
-            ["PCSN", "Product", "Model", "Site", "Events", "Downtime", "Basis", "Uptime"]
+            ["PCSN", "Product", "Customer", "Events", "Downtime", "Basis", "Uptime"]
         ]
         machine_rows.extend(
             [
                 item.pcsn,
                 item.product_code or "-",
-                item.model or "-",
                 item.site_name,
                 item.event_count,
                 item.unplanned_downtime_hours,
@@ -202,13 +201,13 @@ def render_quarterly_report_pdf(report: QuarterlyReport) -> bytes:
             section(
                 "Machine Availability",
                 machine_rows,
-                [20 * mm, 15 * mm, 27 * mm, 48 * mm, 14 * mm, 19 * mm, 18 * mm, 19 * mm],
+                [22 * mm, 18 * mm, 64 * mm, 16 * mm, 22 * mm, 20 * mm, 20 * mm],
             )
         )
 
     if report.site_breakdown:
         site_rows: list[list[object]] = [
-            ["Site", "Machines", "Events", "Downtime (h)", "Basis (h)", "Uptime"]
+            ["Customer", "Machines", "Events", "Downtime (h)", "Basis (h)", "Uptime"]
         ]
         site_rows.extend(
             [
@@ -221,7 +220,7 @@ def render_quarterly_report_pdf(report: QuarterlyReport) -> bytes:
             ]
             for item in report.site_breakdown
         )
-        story.extend(section("Site Availability", site_rows, [75 * mm, 20 * mm, 20 * mm, 25 * mm, 20 * mm, 20 * mm]))
+        story.extend(section("Customer Availability", site_rows, [75 * mm, 20 * mm, 20 * mm, 25 * mm, 20 * mm, 20 * mm]))
 
     breakdown_rows: list[list[object]] = [["Service type", "Events", "Downtime (h)"]]
     breakdown_rows.extend(

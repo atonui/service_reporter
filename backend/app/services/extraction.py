@@ -44,6 +44,8 @@ machine.pcsn is the globally unique top-level machine identifier labelled Asset 
 orders. Do not confuse it with a subcomponent. PCSNs contain letters and numbers only. Product-code
 length varies: known prefixes are H19=TrueBeam Platform, HAL=Halcyon, and H29=Clinac. Preserve an
 unknown full PCSN without guessing where its product code ends.
+customer_site.customer_name and customer_site.site_name mean the same business identity. Put the
+same supported customer name in both fields; do not invent a separate site label.
 Put event fields directly at the top level. Do not wrap them in `service_event`, `event`,
 `data`, or any other enclosing key.
 Use these top-level objects exactly: identification, customer_site, machine, classification,
@@ -714,6 +716,7 @@ def _apply_labelled_document_facts(event: ServiceEvent, document: ParsedDocument
         not current_site or str(current_site).strip().casefold() in {"unknown", "unknown site", "n/a"}
     ):
         customer_site["site_name"] = known_site
+        customer_site["customer_name"] = known_site
 
     document_text = "\n".join(page.text for page in document.pages)
     preventive_match = re.search(

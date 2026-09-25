@@ -75,9 +75,9 @@ def _pcsn(event: ServiceEvent) -> str | None:
 
 def _site_name(event: ServiceEvent) -> str:
     for value in (
-        event.customer_site.site_name,
-        site_name_for_pcsn(_pcsn(event)),
         event.customer_site.customer_name,
+        site_name_for_pcsn(_pcsn(event)),
+        event.customer_site.site_name,
     ):
         if value and value.strip().casefold() not in {"unknown", "unknown site", "n/a"}:
             return value.strip()

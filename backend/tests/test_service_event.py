@@ -22,6 +22,17 @@ def test_real_work_order_fixture_validates() -> None:
     assert len(event.parts) == 3
 
 
+def test_customer_and_site_name_are_one_identity() -> None:
+    payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    payload["customer_site"]["customer_name"] = None
+    payload["customer_site"]["site_name"] = "Garissa County Referral Hospital"
+
+    event = ServiceEvent.model_validate(payload)
+
+    assert event.customer_site.customer_name == "Garissa County Referral Hospital"
+    assert event.customer_site.site_name == "Garissa County Referral Hospital"
+
+
 def test_metrics_are_deterministic() -> None:
     metrics = derive_metrics(load_event())
     assert metrics == {
@@ -49,4 +60,3 @@ def test_negative_part_quantity_is_rejected() -> None:
     payload["parts"][0]["quantity"] = -1
     with pytest.raises(ValidationError):
         ServiceEvent.model_validate(payload)
-
