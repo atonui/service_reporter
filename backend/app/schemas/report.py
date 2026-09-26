@@ -6,16 +6,18 @@ from typing import Literal
 
 from pydantic import Field, model_validator
 
+from backend.app.schemas.machine_registry import RegisteredMachine
 from backend.app.schemas.service_event import ServiceEvent, StrictModel
 
 
 class QuarterlyReportRequest(StrictModel):
     year: int = Field(ge=2020, le=2100)
     quarter: Literal[1, 2, 3, 4]
-    events: list[ServiceEvent] = Field(min_length=1)
+    events: list[ServiceEvent] = Field(default_factory=list)
     working_hours_basis: Decimal | None = Field(default=None, gt=0, decimal_places=2)
     working_hours_per_machine: Decimal | None = Field(default=None, gt=0, decimal_places=2)
     machine_hours_overrides: dict[str, Decimal] = Field(default_factory=dict)
+    registered_machines: list[RegisteredMachine] = Field(default_factory=list)
     site_name: str | None = None
     pcsn: str | None = Field(default=None, pattern=r"^[A-Za-z0-9]+$")
 

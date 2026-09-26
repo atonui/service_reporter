@@ -1,13 +1,34 @@
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
 from backend.app.schemas.report import QuarterlyReportRequest
+from backend.app.schemas.machine_registry import RegisteredMachine
 from backend.app.schemas.service_event import ServiceEvent, ServiceType
 from backend.app.services.reporting import build_quarterly_report, report_filter_options
 
 FIXTURE = Path(__file__).parent / "fixtures" / "wo_004479870.json"
+
+
+def registered_machine(
+    pcsn: str,
+    customer: str,
+    *,
+    quarterly_hours: str | None = None,
+    active: bool = True,
+) -> RegisteredMachine:
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    return RegisteredMachine(
+        id=1,
+        customer_name=customer,
+        pcsn=pcsn,
+        product_code=None,
+        quarterly_hours=quarterly_hours,
+        active=active,
+        created_at=now,
+        updated_at=now,
+    )
 
 
 def event_for(date_value: datetime, work_order_number: str) -> ServiceEvent:
@@ -155,3 +176,51 @@ def test_known_machine_site_repairs_unknown_site_and_populates_filter_options() 
     assert report.machine_breakdown[0].site_name == "Garissa County Referral Hospital"
     assert choices.sites == ["Garissa County Referral Hospital"]
     assert choices.pcsns == ["H194931"]
+
+
+def test_registered_machine_without_events_counts_in_availability() -> None:
+    machines = [
+        registered_machine("H196237", "Coast General Hospital", quarterly_hours="520"),
+        registered_machine("HAL1124", "Coast General Hospital"),
+    ]
+
+    report = build_quarterly_report(
+        QuarterlyReportRequest(
+            year=2026,
+            quarter=3,
+            working_hours_per_machine="504",
+            registered_machines=machines,
+        )
+    )
+
+    assert report.events_received == 0
+    assert report.machine_count == 2
+    assert report.working_hours_basis == Decimal("1024.00")
+    assert report.uptime_percent == Decimal("100.00")
+    assert all(row.event_count == 0 for row in report.machine_breakdown)
+    assert report.site_breakdown[0].machine_count == 2
+
+
+def test_registry_assignment_overrides_event_customer_and_expands_denominator() -> None:
+    event = event_for(datetime(2026, 8, 1, 8), "WO-004479870")
+    event.machine.pcsn = event.machine.asset_id = "H196237"
+    event.customer_site.customer_name = event.customer_site.site_name = "Unknown"
+    machines = [
+        registered_machine("H196237", "Coast General Hospital"),
+        registered_machine("HAL1124", "Coast General Hospital"),
+    ]
+
+    report = build_quarterly_report(
+        QuarterlyReportRequest(
+            year=2026,
+            quarter=3,
+            working_hours_per_machine="504",
+            events=[event],
+            registered_machines=machines,
+        )
+    )
+
+    assert report.machine_count == 2
+    assert report.working_hours_basis == Decimal("1008.00")
+    assert report.site_breakdown[0].site_name == "Coast General Hospital"
+    assert report.site_breakdown[0].machine_count == 2

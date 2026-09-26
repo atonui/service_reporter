@@ -5,7 +5,12 @@ from fastapi.responses import HTMLResponse
 from starlette.concurrency import run_in_threadpool
 
 from backend.app.schemas.document import ParsedDocument
-from backend.app.schemas.extraction import BatchExtractionItem, BatchExtractionResult, ExtractionResult
+from backend.app.schemas.extraction import (
+    BatchExtractionItem,
+    BatchExtractionResult,
+    ExtractionResult,
+)
+from backend.app.schemas.machine_registry import MachineRegistrationInput, RegisteredMachine
 from backend.app.schemas.report import (
     QuarterlyReport,
     QuarterlyReportRequest,
@@ -18,18 +23,6 @@ from backend.app.schemas.storage import (
     EventCorrectionRequest,
     StoredServiceEvent,
 )
-from backend.app.services.extraction import (
-    ExtractionConfigurationError,
-    ExtractionError,
-    extract_service_event,
-)
-from backend.app.services.pdf_parser import (
-    MAX_PDF_BYTES,
-    OcrError,
-    PdfValidationError,
-    parse_pdf_bytes_with_ocr,
-)
-from backend.app.services.reporting import build_quarterly_report, report_filter_options
 from backend.app.services.event_store import (
     approve_event,
     correct_event,
@@ -38,9 +31,26 @@ from backend.app.services.event_store import (
     reportable_events,
     save_extraction,
 )
+from backend.app.services.extraction import (
+    ExtractionConfigurationError,
+    ExtractionError,
+    extract_service_event,
+)
+from backend.app.services.machine_store import (
+    create_registered_machine,
+    list_registered_machines,
+    update_registered_machine,
+)
+from backend.app.services.pdf_parser import (
+    MAX_PDF_BYTES,
+    OcrError,
+    PdfValidationError,
+    parse_pdf_bytes_with_ocr,
+)
 from backend.app.services.report_pdf import render_quarterly_report_pdf
+from backend.app.services.reporting import build_quarterly_report, report_filter_options
 from backend.app.services.validation import validate_service_event
-from backend.app.ui import home_page, reports_page
+from backend.app.ui import home_page, machine_register_page, reports_page
 
 router = APIRouter()
 
@@ -53,6 +63,11 @@ def application_home() -> str:
 @router.get("/reports", response_class=HTMLResponse, include_in_schema=False)
 def quarterly_reports_page() -> str:
     return reports_page()
+
+
+@router.get("/machines", response_class=HTMLResponse, include_in_schema=False)
+def machines_page() -> str:
+    return machine_register_page()
 
 
 @router.get("/review", response_class=HTMLResponse, include_in_schema=False)
@@ -105,7 +120,19 @@ def review_page() -> str:
     button { border:0; border-radius:8px; padding:10px 15px; background:var(--navy); color:white; font-weight:700; cursor:pointer; }
     button.secondary { background:var(--blue); } button:disabled { opacity:.45; cursor:not-allowed; }
     #message { font-weight:600; } .error { color:var(--danger); } .ok { color:var(--success); }
-    details { margin-top:16px; } pre { white-space:pre-wrap; background:#f6f8fa; padding:12px; border-radius:8px; max-height:260px; overflow:auto; }
+    details { margin-top:18px; } details summary { cursor:pointer; color:var(--navy); font-weight:700; }
+    .history-list { display:grid; gap:12px; margin-top:12px; }
+    .history-entry { border:1px solid var(--line); border-radius:9px; overflow:hidden; }
+    .history-head { display:grid; grid-template-columns:auto 1fr auto; gap:10px; align-items:center; padding:10px 12px; background:#f6f8fa; }
+    .history-action { display:inline-block; border-radius:12px; padding:2px 8px; background:#dcecf7; color:var(--navy); font-size:12px; font-weight:800; text-transform:uppercase; }
+    .history-action.approval { background:#d9f2e2; color:var(--success); }
+    .history-date { color:#647483; font-size:12px; }
+    .history-note { margin:0; padding:8px 12px; color:#4c5b68; border-top:1px solid var(--line); }
+    .change-table { width:100%; border-collapse:collapse; }
+    .change-table th,.change-table td { padding:8px 10px; border-top:1px solid var(--line); text-align:left; vertical-align:top; }
+    .change-table th { color:var(--navy); font-size:12px; background:#fbfcfd; }
+    .change-value { max-width:260px; white-space:pre-wrap; overflow-wrap:anywhere; }
+    .empty-history { color:#647483; font-style:italic; padding:12px; }
     .links { margin-top:18px; } .links a { color:var(--blue); margin-right:18px; }
     @media (max-width:900px) { .layout,.form,.field-card { grid-template-columns:1fr; } .parts-table { display:block; overflow:auto; } }
   </style>
@@ -136,7 +163,7 @@ def review_page() -> str:
         <button id="approve" disabled>Approve for reports</button>
         <span id="message" role="status"></span>
       </div>
-      <details><summary>Correction and approval history</summary><pre id="history">[]</pre></details>
+      <details open><summary>Correction and approval history</summary><div id="history" class="history-list"></div></details>
     </section>
   </div>
     <div class="links"><a href="/">Home</a><a href="/batch-upload">Batch upload</a><a href="/reports">Reports</a><a href="/docs">API documentation</a></div>
@@ -213,6 +240,41 @@ def review_page() -> str:
   function renderFlags(record) {
     flags.replaceChildren(); record.review_flags.forEach(flag=>{const li=document.createElement('li');li.textContent=(flag.field_path?flag.field_path+': ':'')+flag.message;flags.append(li)});
   }
+  const fieldLabels={
+    'customer_site.customer_name':'Customer','customer_site.site_name':'Customer','machine.pcsn':'PCSN','machine.asset_id':'PCSN',
+    'classification.service_type':'Service type','timing.reported_downtime_hours':'Reported downtime','classification.raw_subject':'Subject',
+    'intervention.raw_closure_summary':'Intervention','intervention.normalized_summary':'Normalized intervention','intervention.activities':'Intervention activities'
+  };
+  function friendlyField(path) {
+    if (fieldLabels[path]) return fieldLabels[path];
+    const part=path.match(/^parts\\[(\\d+)\\]\\.(.+)$/);
+    if (part) return 'Part '+(Number(part[1])+1)+' · '+part[2].replaceAll('_',' ').replace(/^./,x=>x.toUpperCase());
+    return path.replaceAll('_',' ').replaceAll('.',' › ').replace(/^./,x=>x.toUpperCase());
+  }
+  function displayValue(value) {
+    if (value===null||value===undefined||value==='') return '—';
+    if (Array.isArray(value)) return value.length?value.map(displayValue).join(', '):'—';
+    if (typeof value==='object') return JSON.stringify(value);
+    if (typeof value==='boolean') return value?'Yes':'No';
+    return String(value).replaceAll('_',' ');
+  }
+  function renderHistory(entries) {
+    history.replaceChildren();
+    if (!entries.length) { const empty=document.createElement('div');empty.className='empty-history';empty.textContent='No corrections or approvals have been recorded.';history.append(empty);return; }
+    [...entries].reverse().forEach(entry=>{
+      const card=document.createElement('section');card.className='history-entry';
+      const head=document.createElement('div');head.className='history-head';
+      const action=document.createElement('span');action.className='history-action '+(entry.action==='approval'?'approval':'');action.textContent=entry.action;
+      const actorName=document.createElement('strong');actorName.textContent=entry.actor;
+      const date=document.createElement('span');date.className='history-date';date.textContent=new Date(entry.timestamp).toLocaleString();head.append(action,actorName,date);card.append(head);
+      if (entry.note) { const noteText=document.createElement('p');noteText.className='history-note';noteText.textContent=entry.note;card.append(noteText); }
+      if (entry.changes.length) {
+        const table=document.createElement('table');table.className='change-table';table.innerHTML='<thead><tr><th>Field</th><th>Previous value</th><th>New value</th></tr></thead>';
+        const body=document.createElement('tbody');entry.changes.forEach(change=>{const row=document.createElement('tr');[friendlyField(change.field_path),displayValue(change.old_value),displayValue(change.new_value)].forEach((value,index)=>{const cell=document.createElement('td');cell.textContent=value;if(index)cell.className='change-value';row.append(cell)});body.append(row)});table.append(body);card.append(table);
+      } else if (entry.action==='approval') { const approved=document.createElement('p');approved.className='history-note';approved.textContent='Event approved for reporting.';card.append(approved); }
+      history.append(card);
+    });
+  }
   function selectRecord(record, button) {
     selected=record; document.querySelectorAll('#events button').forEach(x=>x.classList.remove('selected')); button.classList.add('selected');
     title.textContent=record.event.identification.work_order_number+' — '+record.approval_status;
@@ -231,7 +293,7 @@ def review_page() -> str:
     renderEvidence('evidence-intervention',['intervention.raw_closure_summary','intervention.normalized_summary'],['intervention.activities']);
     renderEvidence('evidence-parts',[],['parts']);
     dirty=false; fieldEditor.hidden=false; save.disabled=false; approve.disabled=false;
-    history.textContent=JSON.stringify(record.correction_history,null,2); setMessage('');
+    renderHistory(record.correction_history); setMessage('');
   }
   function correctedEvent() {
     if (!fieldEditor.reportValidity()) throw new Error('Correct the highlighted fields before saving.');
@@ -537,7 +599,9 @@ def stored_service_event(event_id: int) -> dict:
     """Return one saved event, including its review history."""
     record = get_event(event_id)
     if not record:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service event not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Service event not found."
+        )
     return record
 
 
@@ -551,7 +615,9 @@ def update_stored_service_event(event_id: int, request: EventCorrectionRequest) 
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
         ) from exc
     if not record:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service event not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Service event not found."
+        )
     return record
 
 
@@ -560,7 +626,9 @@ def approve_stored_service_event(event_id: int, request: EventApprovalRequest) -
     """Approve a reviewed event so stored quarterly reports can include it."""
     record = approve_event(event_id, request)
     if not record:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service event not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Service event not found."
+        )
     return record
 
 
@@ -570,15 +638,47 @@ def stored_quarterly_report(request: StoredQuarterlyReportRequest) -> QuarterlyR
     return _build_stored_quarterly_report(request)
 
 
+@router.get("/v1/machines", response_model=list[RegisteredMachine])
+def registered_machines() -> list[RegisteredMachine]:
+    return list_registered_machines()
+
+
+@router.post("/v1/machines", response_model=RegisteredMachine, status_code=201)
+def register_machine(request: MachineRegistrationInput) -> RegisteredMachine:
+    try:
+        return create_registered_machine(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+
+@router.put("/v1/machines/{machine_id}", response_model=RegisteredMachine)
+def update_machine(machine_id: int, request: MachineRegistrationInput) -> RegisteredMachine:
+    try:
+        machine = update_registered_machine(machine_id, request)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    if not machine:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Machine not found.")
+    return machine
+
+
 @router.get("/v1/reports/filter-options", response_model=ReportFilterOptions)
 def stored_report_filter_options() -> ReportFilterOptions:
     """List sites and PCSNs available for editable report filter controls."""
-    return report_filter_options(reportable_events())
+    options = report_filter_options(reportable_events())
+    machines = list_registered_machines()
+    return ReportFilterOptions(
+        sites=sorted(
+            {*options.sites, *(item.customer_name for item in machines)}, key=str.casefold
+        ),
+        pcsns=sorted({*options.pcsns, *(item.pcsn for item in machines)}),
+    )
 
 
 def _build_stored_quarterly_report(request: StoredQuarterlyReportRequest) -> QuarterlyReport:
     events = reportable_events()
-    if not events:
+    machines = list_registered_machines()
+    if not events and not machines:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No report-ready stored service events are available.",
@@ -590,6 +690,7 @@ def _build_stored_quarterly_report(request: StoredQuarterlyReportRequest) -> Qua
             working_hours_basis=request.working_hours_basis,
             working_hours_per_machine=request.working_hours_per_machine,
             machine_hours_overrides=request.machine_hours_overrides,
+            registered_machines=machines,
             site_name=request.site_name,
             pcsn=request.pcsn,
             events=events,

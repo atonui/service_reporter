@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import re
 from calendar import monthrange
 from collections import defaultdict
 from datetime import date, datetime
-from decimal import Decimal, ROUND_HALF_UP
-import re
+from decimal import ROUND_HALF_UP, Decimal
 
+from backend.app.schemas.machine_registry import RegisteredMachine
 from backend.app.schemas.report import (
     MachineAvailability,
     MetricCount,
@@ -13,8 +14,8 @@ from backend.app.schemas.report import (
     QuarterlyIncident,
     QuarterlyReport,
     QuarterlyReportRequest,
-    ReportFilterOptions,
     RepeatIssue,
+    ReportFilterOptions,
     ReportPeriod,
     SiteAvailability,
 )
@@ -52,7 +53,9 @@ def _event_date(event: ServiceEvent) -> datetime | None:
     if event.identification.service_date:
         return event.identification.service_date
     if _effective_service_type(event) == "corrective_breakdown":
-        return event.timing.malfunction_start or event.timing.time_in or event.timing.machine_release
+        return (
+            event.timing.malfunction_start or event.timing.time_in or event.timing.machine_release
+        )
     return event.timing.time_in or event.timing.machine_release or event.timing.malfunction_start
 
 
@@ -64,7 +67,9 @@ def _downtime(event: ServiceEvent) -> Decimal | None:
     if event.computed.downtime_hours is not None:
         return event.computed.downtime_hours
     if event.timing.malfunction_start and event.timing.machine_release:
-        hours = (event.timing.machine_release - event.timing.malfunction_start).total_seconds() / 3600
+        hours = (
+            event.timing.machine_release - event.timing.malfunction_start
+        ).total_seconds() / 3600
         return _q(str(hours))
     return None
 
@@ -101,28 +106,70 @@ def _site_key(value: str) -> str:
 def _period(year: int, quarter: int) -> ReportPeriod:
     first_month = (quarter - 1) * 3 + 1
     last_month = first_month + 2
-    return ReportPeriod(label=f"Q{quarter} {year}", start_date=date(year, first_month, 1), end_date=date(year, last_month, monthrange(year, last_month)[1]))
+    return ReportPeriod(
+        label=f"Q{quarter} {year}",
+        start_date=date(year, first_month, 1),
+        end_date=date(year, last_month, monthrange(year, last_month)[1]),
+    )
+
+
+def _registered_in_period(machine: RegisteredMachine, period: ReportPeriod) -> bool:
+    if machine.active_from and machine.active_from > period.end_date:
+        return False
+    if machine.active_until and machine.active_until < period.start_date:
+        return False
+    return not (not machine.active and machine.active_until is None)
 
 
 def _metric_rows(values: dict[str, tuple[int, Decimal]]) -> list[MetricCount]:
-    return [MetricCount(label=label, count=count, downtime_hours=_q(downtime)) for label, (count, downtime) in sorted(values.items(), key=lambda item: (-item[1][0], item[0]))]
+    return [
+        MetricCount(label=label, count=count, downtime_hours=_q(downtime))
+        for label, (count, downtime) in sorted(
+            values.items(), key=lambda item: (-item[1][0], item[0])
+        )
+    ]
 
 
 def build_quarterly_report(request: QuarterlyReportRequest) -> QuarterlyReport:
     period = _period(request.year, request.quarter)
     requested_pcsn = normalize_pcsn(request.pcsn)
     requested_site = _site_key(request.site_name) if request.site_name else None
+    registrations = {
+        normalize_pcsn(machine.pcsn): machine
+        for machine in request.registered_machines
+        if normalize_pcsn(machine.pcsn)
+    }
+
+    def event_customer(event: ServiceEvent) -> str:
+        registered = registrations.get(_pcsn(event))
+        return registered.customer_name if registered else _site_name(event)
+
     filtered_events = [
         event
         for event in request.events
         if (not requested_pcsn or _pcsn(event) == requested_pcsn)
-        and (not requested_site or _site_key(_site_name(event)) == requested_site)
+        and (not requested_site or _site_key(event_customer(event)) == requested_site)
+        and (
+            not registrations.get(_pcsn(event))
+            or _registered_in_period(registrations[_pcsn(event)], period)
+        )
     ]
-    machine_registry: dict[str, ServiceEvent] = {}
+    machine_registry: dict[str, tuple[ServiceEvent | None, RegisteredMachine | None]] = {}
+    for pcsn, machine in registrations.items():
+        if not _registered_in_period(machine, period):
+            continue
+        if requested_pcsn and pcsn != requested_pcsn:
+            continue
+        if requested_site and _site_key(machine.customer_name) != requested_site:
+            continue
+        machine_registry[pcsn] = (None, machine)
     for event in filtered_events:
         pcsn = _pcsn(event)
         if pcsn:
-            machine_registry.setdefault(pcsn, event)
+            existing_event, registered = machine_registry.get(pcsn, (None, registrations.get(pcsn)))
+            if registered and not _registered_in_period(registered, period):
+                continue
+            machine_registry[pcsn] = (existing_event or event, registered)
 
     in_period: list[ServiceEvent] = []
     outside_period = 0
@@ -131,7 +178,9 @@ def build_quarterly_report(request: QuarterlyReportRequest) -> QuarterlyReport:
         event_date = _event_date(event)
         if event_date is None:
             outside_period += 1
-            notes.append(f"{event.identification.work_order_number}: no service date; excluded from period.")
+            notes.append(
+                f"{event.identification.work_order_number}: no service date; excluded from period."
+            )
         elif period.start_date <= event_date.date() <= period.end_date:
             in_period.append(event)
         else:
@@ -171,28 +220,58 @@ def build_quarterly_report(request: QuarterlyReportRequest) -> QuarterlyReport:
                 f"{event.identification.work_order_number}: PCSN is unavailable; "
                 "the event is not included in a machine availability row."
             )
-        def add(
-            bucket: dict[str, tuple[int, Decimal]], label: str, hours_to_add: Decimal
-        ) -> None:
+
+        def add(bucket: dict[str, tuple[int, Decimal]], label: str, hours_to_add: Decimal) -> None:
             count, hours = bucket[label]
             bucket[label] = (count + 1, hours + hours_to_add)
+
         add(service_types, service_type, impact_downtime_value)
         category = event.classification.fault_category or "Unclassified"
         add(fault_categories, category, impact_downtime_value)
-        intervention_group = event.intervention.normalized_summary or event.intervention.raw_closure_summary
-        intervention_detail = event.intervention.raw_closure_summary or event.intervention.normalized_summary
+        intervention_group = (
+            event.intervention.normalized_summary or event.intervention.raw_closure_summary
+        )
+        intervention_detail = (
+            event.intervention.raw_closure_summary or event.intervention.normalized_summary
+        )
         if intervention_group:
             add(interventions, intervention_group, impact_downtime_value)
-        issue = event.classification.fault_subcategory or event.classification.fault_category or event.classification.raw_subject
+        issue = (
+            event.classification.fault_subcategory
+            or event.classification.fault_category
+            or event.classification.raw_subject
+        )
         if issue:
             key = (pcsn, issue)
             count, hours, work_orders = issue_groups.get(key, (0, ZERO, []))
-            issue_groups[key] = (count + 1, hours + impact_downtime_value, [*work_orders, event.identification.work_order_number])
+            issue_groups[key] = (
+                count + 1,
+                hours + impact_downtime_value,
+                [*work_orders, event.identification.work_order_number],
+            )
         for part in event.parts:
             key = (part.part_number, part.normalized_description or part.raw_description)
             quantity, work_orders = parts.get(key, (Decimal(0), set()))
-            parts[key] = (quantity + part.quantity, {*work_orders, event.identification.work_order_number})
-        incidents.append(QuarterlyIncident(work_order_number=event.identification.work_order_number, service_date=_event_date(event), pcsn=pcsn, asset_id=pcsn, service_type=service_type, issue=issue, intervention=intervention_detail, downtime_hours=_q(downtime) if downtime is not None else None, included_in_uptime=unplanned and downtime is not None, source_file_name=event.source_document.file_name, evidence_count=len(event.evidence), review_required=not bool(event.evidence)))
+            parts[key] = (
+                quantity + part.quantity,
+                {*work_orders, event.identification.work_order_number},
+            )
+        incidents.append(
+            QuarterlyIncident(
+                work_order_number=event.identification.work_order_number,
+                service_date=_event_date(event),
+                pcsn=pcsn,
+                asset_id=pcsn,
+                service_type=service_type,
+                issue=issue,
+                intervention=intervention_detail,
+                downtime_hours=_q(downtime) if downtime is not None else None,
+                included_in_uptime=unplanned and downtime is not None,
+                source_file_name=event.source_document.file_name,
+                evidence_count=len(event.evidence),
+                review_required=not bool(event.evidence),
+            )
+        )
 
     default_basis = request.per_machine_basis()
     overrides = {
@@ -201,19 +280,24 @@ def build_quarterly_report(request: QuarterlyReportRequest) -> QuarterlyReport:
         if normalize_pcsn(key)
     }
     machine_rows: list[MachineAvailability] = []
-    for pcsn, event in sorted(machine_registry.items()):
-        basis = overrides.get(pcsn, default_basis)
-        downtime = machine_downtime[pcsn]
-        machine_uptime = (
-            _q(max(ZERO, (basis - downtime) / basis * Decimal(100))) if basis else None
+    for pcsn, (event, registered) in sorted(machine_registry.items()):
+        basis = overrides.get(
+            pcsn,
+            registered.quarterly_hours
+            if registered and registered.quarterly_hours is not None
+            else default_basis,
         )
+        downtime = machine_downtime[pcsn]
+        machine_uptime = _q(max(ZERO, (basis - downtime) / basis * Decimal(100))) if basis else None
         identity = pcsn_details(pcsn)
         machine_rows.append(
             MachineAvailability(
                 pcsn=pcsn,
-                product_code=event.machine.product_code or identity["product_code"],
-                model=event.machine.model or identity["model"],
-                site_name=_site_name(event),
+                product_code=(registered.product_code if registered else None)
+                or (event.machine.product_code if event else None)
+                or identity["product_code"],
+                model=(event.machine.model if event else None) or identity["model"],
+                site_name=registered.customer_name if registered else _site_name(event),
                 event_count=machine_events[pcsn],
                 corrective_event_count=machine_corrective_events[pcsn],
                 unplanned_downtime_hours=_q(downtime),
@@ -249,14 +333,55 @@ def build_quarterly_report(request: QuarterlyReportRequest) -> QuarterlyReport:
     total_basis = sum((row.working_hours_basis or ZERO for row in machine_rows), start=ZERO)
     if total_basis > 0:
         if unplanned_downtime > total_basis:
-            notes.append("Unplanned downtime exceeds the supplied working-hours basis; uptime set to 0%.")
+            notes.append(
+                "Unplanned downtime exceeds the supplied working-hours basis; uptime set to 0%."
+            )
         uptime = _q(max(ZERO, (total_basis - unplanned_downtime) / total_basis * Decimal(100)))
     else:
         uptime = None
         notes.append("No per-machine working-hours basis supplied; uptime was not calculated.")
-    repeat_issues = [RepeatIssue(pcsn=pcsn, asset_id=pcsn, issue=issue, occurrences=count, downtime_hours=_q(hours), work_order_numbers=work_orders) for (pcsn, issue), (count, hours, work_orders) in issue_groups.items() if count >= 2]
+    repeat_issues = [
+        RepeatIssue(
+            pcsn=pcsn,
+            asset_id=pcsn,
+            issue=issue,
+            occurrences=count,
+            downtime_hours=_q(hours),
+            work_order_numbers=work_orders,
+        )
+        for (pcsn, issue), (count, hours, work_orders) in issue_groups.items()
+        if count >= 2
+    ]
     repeat_issues.sort(key=lambda item: (-item.occurrences, -item.downtime_hours, item.issue))
-    part_rows = [PartUsage(part_number=number, description=description, quantity=quantity, work_order_numbers=sorted(work_orders)) for (number, description), (quantity, work_orders) in parts.items()]
+    part_rows = [
+        PartUsage(
+            part_number=number,
+            description=description,
+            quantity=quantity,
+            work_order_numbers=sorted(work_orders),
+        )
+        for (number, description), (quantity, work_orders) in parts.items()
+    ]
     part_rows.sort(key=lambda item: (-item.quantity, item.description))
     incidents.sort(key=lambda item: (item.service_date or datetime.min, item.work_order_number))
-    return QuarterlyReport(period=period, events_received=len(filtered_events), events_in_period=len(in_period), events_outside_period=outside_period, unplanned_downtime_hours=_q(unplanned_downtime), total_reported_downtime_hours=_q(total_downtime), machine_count=len(machine_rows), working_hours_per_machine=_q(default_basis) if default_basis is not None else None, working_hours_basis=_q(total_basis) if total_basis > 0 else None, uptime_percent=uptime, service_type_breakdown=_metric_rows(service_types), fault_category_breakdown=_metric_rows(fault_categories), intervention_breakdown=_metric_rows(interventions), parts_used=part_rows, repeat_issues=repeat_issues, incidents=incidents, machine_breakdown=machine_rows, site_breakdown=site_rows, review_notes=notes)
+    return QuarterlyReport(
+        period=period,
+        events_received=len(filtered_events),
+        events_in_period=len(in_period),
+        events_outside_period=outside_period,
+        unplanned_downtime_hours=_q(unplanned_downtime),
+        total_reported_downtime_hours=_q(total_downtime),
+        machine_count=len(machine_rows),
+        working_hours_per_machine=_q(default_basis) if default_basis is not None else None,
+        working_hours_basis=_q(total_basis) if total_basis > 0 else None,
+        uptime_percent=uptime,
+        service_type_breakdown=_metric_rows(service_types),
+        fault_category_breakdown=_metric_rows(fault_categories),
+        intervention_breakdown=_metric_rows(interventions),
+        parts_used=part_rows,
+        repeat_issues=repeat_issues,
+        incidents=incidents,
+        machine_breakdown=machine_rows,
+        site_breakdown=site_rows,
+        review_notes=notes,
+    )

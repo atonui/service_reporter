@@ -25,6 +25,17 @@ def test_application_home_links_the_workflow() -> None:
     assert 'href="/batch-upload"' in response.text
     assert 'href="/review"' in response.text
     assert 'href="/reports"' in response.text
+    assert 'href="/machines"' in response.text
+
+
+def test_machine_register_page_has_normal_fields_and_crud_endpoints() -> None:
+    response = client.get("/machines")
+    assert response.status_code == 200
+    assert "Customer &amp; Machine Register" in response.text
+    assert 'id="customer"' in response.text
+    assert 'id="pcsn"' in response.text
+    assert 'id="hours"' in response.text
+    assert "'/v1/machines'" in response.text
 
 
 def test_quarterly_reports_page_uses_stored_report_endpoints() -> None:
@@ -62,6 +73,10 @@ def test_review_page_has_correction_and_approval_controls() -> None:
     assert 'id="parts-body"' in response.text
     assert "Source evidence" in response.text
     assert 'id="editor"' not in response.text
+    assert "Previous value" in response.text
+    assert "New value" in response.text
+    assert "renderHistory" in response.text
+    assert '<pre id="history">' not in response.text
 
 
 def test_schema_is_exposed() -> None:
