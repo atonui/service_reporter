@@ -687,6 +687,8 @@ def _build_stored_quarterly_report(request: StoredQuarterlyReportRequest) -> Qua
         QuarterlyReportRequest(
             year=request.year,
             quarter=request.quarter,
+            start_date=request.start_date,
+            end_date=request.end_date,
             working_hours_basis=request.working_hours_basis,
             working_hours_per_machine=request.working_hours_per_machine,
             machine_hours_overrides=request.machine_hours_overrides,
@@ -706,7 +708,10 @@ def stored_quarterly_report_pdf(request: StoredQuarterlyReportRequest) -> Respon
     """Download the stored quarterly report as a printable PDF."""
     report = _build_stored_quarterly_report(request)
     content = render_quarterly_report_pdf(report)
-    file_name = f"service-report-Q{request.quarter}-{request.year}.pdf"
+    if request.start_date and request.end_date:
+        file_name = f"service-report-{request.start_date}-to-{request.end_date}.pdf"
+    else:
+        file_name = f"service-report-Q{request.quarter}-{request.year}.pdf"
     return Response(
         content=content,
         media_type="application/pdf",

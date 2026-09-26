@@ -11,8 +11,10 @@ from backend.app.schemas.service_event import ServiceEvent, StrictModel
 
 
 class QuarterlyReportRequest(StrictModel):
-    year: int = Field(ge=2020, le=2100)
-    quarter: Literal[1, 2, 3, 4]
+    year: int | None = Field(default=None, ge=2020, le=2100)
+    quarter: Literal[1, 2, 3, 4] | None = None
+    start_date: date | None = None
+    end_date: date | None = None
     events: list[ServiceEvent] = Field(default_factory=list)
     working_hours_basis: Decimal | None = Field(default=None, gt=0, decimal_places=2)
     working_hours_per_machine: Decimal | None = Field(default=None, gt=0, decimal_places=2)
@@ -24,10 +26,17 @@ class QuarterlyReportRequest(StrictModel):
     def per_machine_basis(self) -> Decimal | None:
         return self.working_hours_per_machine or self.working_hours_basis
 
+    @model_validator(mode="after")
+    def report_period_is_complete(self) -> QuarterlyReportRequest:
+        _validate_period_fields(self.year, self.quarter, self.start_date, self.end_date)
+        return self
+
 
 class StoredQuarterlyReportRequest(StrictModel):
-    year: int = Field(ge=2020, le=2100)
-    quarter: Literal[1, 2, 3, 4]
+    year: int | None = Field(default=None, ge=2020, le=2100)
+    quarter: Literal[1, 2, 3, 4] | None = None
+    start_date: date | None = None
+    end_date: date | None = None
     working_hours_basis: Decimal | None = Field(default=None, gt=0, decimal_places=2)
     working_hours_per_machine: Decimal | None = Field(default=None, gt=0, decimal_places=2)
     machine_hours_overrides: dict[str, Decimal] = Field(default_factory=dict)
@@ -36,6 +45,28 @@ class StoredQuarterlyReportRequest(StrictModel):
 
     def per_machine_basis(self) -> Decimal | None:
         return self.working_hours_per_machine or self.working_hours_basis
+
+    @model_validator(mode="after")
+    def report_period_is_complete(self) -> StoredQuarterlyReportRequest:
+        _validate_period_fields(self.year, self.quarter, self.start_date, self.end_date)
+        return self
+
+
+def _validate_period_fields(
+    year: int | None,
+    quarter: int | None,
+    start_date: date | None,
+    end_date: date | None,
+) -> None:
+    has_dates = start_date is not None or end_date is not None
+    if has_dates:
+        if start_date is None or end_date is None:
+            raise ValueError("start_date and end_date must be supplied together")
+        if end_date < start_date:
+            raise ValueError("end_date cannot be before start_date")
+        return
+    if year is None or quarter is None:
+        raise ValueError("supply either start_date and end_date, or year and quarter")
 
 
 class ReportFilterOptions(StrictModel):

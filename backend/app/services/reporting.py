@@ -103,7 +103,7 @@ def _site_key(value: str) -> str:
     return re.sub(r"[^a-z0-9]", "", value.casefold())
 
 
-def _period(year: int, quarter: int) -> ReportPeriod:
+def _quarter_period(year: int, quarter: int) -> ReportPeriod:
     first_month = (quarter - 1) * 3 + 1
     last_month = first_month + 2
     return ReportPeriod(
@@ -111,6 +111,18 @@ def _period(year: int, quarter: int) -> ReportPeriod:
         start_date=date(year, first_month, 1),
         end_date=date(year, last_month, monthrange(year, last_month)[1]),
     )
+
+
+def _report_period(request: QuarterlyReportRequest) -> ReportPeriod:
+    if request.start_date and request.end_date:
+        return ReportPeriod(
+            label=f"{request.start_date.isoformat()} to {request.end_date.isoformat()}",
+            start_date=request.start_date,
+            end_date=request.end_date,
+        )
+    if request.year is None or request.quarter is None:
+        raise ValueError("A complete report period is required.")
+    return _quarter_period(request.year, request.quarter)
 
 
 def _registered_in_period(machine: RegisteredMachine, period: ReportPeriod) -> bool:
@@ -131,7 +143,7 @@ def _metric_rows(values: dict[str, tuple[int, Decimal]]) -> list[MetricCount]:
 
 
 def build_quarterly_report(request: QuarterlyReportRequest) -> QuarterlyReport:
-    period = _period(request.year, request.quarter)
+    period = _report_period(request)
     requested_pcsn = normalize_pcsn(request.pcsn)
     requested_site = _site_key(request.site_name) if request.site_name else None
     registrations = {
@@ -281,11 +293,16 @@ def build_quarterly_report(request: QuarterlyReportRequest) -> QuarterlyReport:
     }
     machine_rows: list[MachineAvailability] = []
     for pcsn, (event, registered) in sorted(machine_registry.items()):
+        registered_basis = (
+            registered.quarterly_hours
+            if registered
+            and registered.quarterly_hours is not None
+            and request.start_date is None
+            else default_basis
+        )
         basis = overrides.get(
             pcsn,
-            registered.quarterly_hours
-            if registered and registered.quarterly_hours is not None
-            else default_basis,
+            registered_basis,
         )
         downtime = machine_downtime[pcsn]
         machine_uptime = _q(max(ZERO, (basis - downtime) / basis * Decimal(100))) if basis else None

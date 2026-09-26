@@ -138,7 +138,7 @@ def render_quarterly_report_pdf(report: QuarterlyReport) -> bytes:
         return [Paragraph(title, styles["Section"]), table]
 
     story: list[object] = [
-        Paragraph("Quarterly Service Report", styles["ReportTitle"]),
+        Paragraph("Service Report", styles["ReportTitle"]),
         Paragraph(
             f"{report.period.label} | {report.period.start_date.isoformat()} to "
             f"{report.period.end_date.isoformat()}",
@@ -183,12 +183,11 @@ def render_quarterly_report_pdf(report: QuarterlyReport) -> bytes:
 
     if report.machine_breakdown:
         machine_rows: list[list[object]] = [
-            ["PCSN", "Product", "Customer", "Events", "Downtime", "Basis", "Uptime"]
+            ["PCSN", "Customer", "Events", "Downtime", "Basis", "Uptime"]
         ]
         machine_rows.extend(
             [
                 item.pcsn,
-                item.product_code or "-",
                 item.site_name,
                 item.event_count,
                 item.unplanned_downtime_hours,
@@ -201,7 +200,7 @@ def render_quarterly_report_pdf(report: QuarterlyReport) -> bytes:
             section(
                 "Machine Availability",
                 machine_rows,
-                [22 * mm, 18 * mm, 64 * mm, 16 * mm, 22 * mm, 20 * mm, 20 * mm],
+                [25 * mm, 77 * mm, 18 * mm, 23 * mm, 20 * mm, 20 * mm],
             )
         )
 

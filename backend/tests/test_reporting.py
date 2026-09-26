@@ -224,3 +224,44 @@ def test_registry_assignment_overrides_event_customer_and_expands_denominator() 
     assert report.working_hours_basis == Decimal("1008.00")
     assert report.site_breakdown[0].site_name == "Coast General Hospital"
     assert report.site_breakdown[0].machine_count == 2
+
+
+def test_custom_date_range_is_inclusive_and_uses_selected_period_basis() -> None:
+    first = event_for(datetime(2026, 8, 1, 8), "WO-004479870")
+    outside = event_for(datetime(2026, 8, 16, 8), "WO-004479871")
+    first.machine.pcsn = first.machine.asset_id = "H196237"
+    outside.machine.pcsn = outside.machine.asset_id = "H196237"
+    machine = registered_machine(
+        "H196237", "Coast General Hospital", quarterly_hours="520"
+    )
+
+    report = build_quarterly_report(
+        QuarterlyReportRequest(
+            start_date="2026-08-01",
+            end_date="2026-08-15",
+            working_hours_per_machine="80",
+            events=[first, outside],
+            registered_machines=[machine],
+        )
+    )
+
+    assert report.period.label == "2026-08-01 to 2026-08-15"
+    assert report.events_in_period == 1
+    assert report.events_outside_period == 1
+    assert report.working_hours_basis == Decimal("80.00")
+
+
+def test_report_period_requires_complete_ordered_dates() -> None:
+    try:
+        QuarterlyReportRequest(start_date="2026-08-01")
+    except ValueError as exc:
+        assert "supplied together" in str(exc)
+    else:
+        raise AssertionError("an incomplete custom period should be rejected")
+
+    try:
+        QuarterlyReportRequest(start_date="2026-08-15", end_date="2026-08-01")
+    except ValueError as exc:
+        assert "cannot be before" in str(exc)
+    else:
+        raise AssertionError("a reversed custom period should be rejected")

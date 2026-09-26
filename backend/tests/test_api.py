@@ -49,6 +49,10 @@ def test_quarterly_reports_page_uses_stored_report_endpoints() -> None:
     assert "/v1/reports/filter-options" in response.text
     assert "Customer availability" in response.text
     assert "<th>Model</th>" not in response.text
+    assert "<th>Product</th>" not in response.text
+    assert 'value="custom">Custom dates' in response.text
+    assert 'id="start-date"' in response.text
+    assert 'id="end-date"' in response.text
 
 
 def test_batch_upload_page_has_a_real_multiple_file_control() -> None:
