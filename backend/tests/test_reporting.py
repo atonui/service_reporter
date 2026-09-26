@@ -251,6 +251,21 @@ def test_custom_date_range_is_inclusive_and_uses_selected_period_basis() -> None
     assert report.working_hours_basis == Decimal("80.00")
 
 
+def test_custom_date_range_calculates_eight_hour_weekdays_automatically() -> None:
+    machine = registered_machine("H196237", "Coast General Hospital")
+    report = build_quarterly_report(
+        QuarterlyReportRequest(
+            start_date="2026-08-01",
+            end_date="2026-08-15",
+            registered_machines=[machine],
+        )
+    )
+
+    assert report.working_hours_per_machine == Decimal("80.00")
+    assert report.working_hours_basis == Decimal("80.00")
+    assert report.uptime_percent == Decimal("100.00")
+
+
 def test_report_period_requires_complete_ordered_dates() -> None:
     try:
         QuarterlyReportRequest(start_date="2026-08-01")

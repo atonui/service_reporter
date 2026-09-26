@@ -38,6 +38,13 @@ def test_machine_register_page_has_normal_fields_and_crud_endpoints() -> None:
     assert "'/v1/machines'" in response.text
 
 
+def test_holiday_calendar_page_explains_eight_hour_schedule() -> None:
+    response = client.get("/holidays")
+    assert response.status_code == 200
+    assert "8 operating hours" in response.text
+    assert "/v1/holidays" in response.text
+
+
 def test_quarterly_reports_page_uses_stored_report_endpoints() -> None:
     response = client.get("/reports")
     assert response.status_code == 200
@@ -53,6 +60,7 @@ def test_quarterly_reports_page_uses_stored_report_endpoints() -> None:
     assert 'value="custom">Custom dates' in response.text
     assert 'id="start-date"' in response.text
     assert 'id="end-date"' in response.text
+    assert 'id="hours"' not in response.text
 
 
 def test_batch_upload_page_has_a_real_multiple_file_control() -> None:

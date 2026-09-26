@@ -21,6 +21,7 @@ from backend.app.schemas.report import (
 )
 from backend.app.schemas.service_event import ServiceEvent
 from backend.app.services.machine_identity import normalize_pcsn, pcsn_details, site_name_for_pcsn
+from backend.app.services.business_calendar import operating_hours, standard_kenya_holidays
 
 ZERO = Decimal("0.00")
 UNPLANNED_TYPES = {"corrective_breakdown"}
@@ -113,7 +114,7 @@ def _quarter_period(year: int, quarter: int) -> ReportPeriod:
     )
 
 
-def _report_period(request: QuarterlyReportRequest) -> ReportPeriod:
+def report_period(request: QuarterlyReportRequest) -> ReportPeriod:
     if request.start_date and request.end_date:
         return ReportPeriod(
             label=f"{request.start_date.isoformat()} to {request.end_date.isoformat()}",
@@ -143,7 +144,7 @@ def _metric_rows(values: dict[str, tuple[int, Decimal]]) -> list[MetricCount]:
 
 
 def build_quarterly_report(request: QuarterlyReportRequest) -> QuarterlyReport:
-    period = _report_period(request)
+    period = report_period(request)
     requested_pcsn = normalize_pcsn(request.pcsn)
     requested_site = _site_key(request.site_name) if request.site_name else None
     registrations = {
@@ -285,7 +286,17 @@ def build_quarterly_report(request: QuarterlyReportRequest) -> QuarterlyReport:
             )
         )
 
-    default_basis = request.per_machine_basis()
+    if request.use_supplied_holiday_calendar:
+        holiday_dates = set(request.holiday_dates)
+    else:
+        holiday_dates = {
+            holiday_date
+            for year in range(period.start_date.year, period.end_date.year + 1)
+            for holiday_date, _name in standard_kenya_holidays(year)
+        }
+    default_basis = request.per_machine_basis() or operating_hours(
+        period.start_date, period.end_date, holiday_dates
+    )
     overrides = {
         normalize_pcsn(key): Decimal(value)
         for key, value in request.machine_hours_overrides.items()

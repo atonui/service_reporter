@@ -20,6 +20,8 @@ class QuarterlyReportRequest(StrictModel):
     working_hours_per_machine: Decimal | None = Field(default=None, gt=0, decimal_places=2)
     machine_hours_overrides: dict[str, Decimal] = Field(default_factory=dict)
     registered_machines: list[RegisteredMachine] = Field(default_factory=list)
+    holiday_dates: list[date] = Field(default_factory=list)
+    use_supplied_holiday_calendar: bool = False
     site_name: str | None = None
     pcsn: str | None = Field(default=None, pattern=r"^[A-Za-z0-9]+$")
 

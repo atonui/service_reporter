@@ -11,6 +11,7 @@ from backend.app.schemas.extraction import (
     ExtractionResult,
 )
 from backend.app.schemas.machine_registry import MachineRegistrationInput, RegisteredMachine
+from backend.app.schemas.holiday import Holiday, HolidayInput
 from backend.app.schemas.report import (
     QuarterlyReport,
     QuarterlyReportRequest,
@@ -41,6 +42,13 @@ from backend.app.services.machine_store import (
     list_registered_machines,
     update_registered_machine,
 )
+from backend.app.services.holiday_store import (
+    create_holiday,
+    delete_holiday,
+    holiday_dates_for_range,
+    list_holidays,
+    update_holiday,
+)
 from backend.app.services.pdf_parser import (
     MAX_PDF_BYTES,
     OcrError,
@@ -48,9 +56,13 @@ from backend.app.services.pdf_parser import (
     parse_pdf_bytes_with_ocr,
 )
 from backend.app.services.report_pdf import render_quarterly_report_pdf
-from backend.app.services.reporting import build_quarterly_report, report_filter_options
+from backend.app.services.reporting import (
+    build_quarterly_report,
+    report_filter_options,
+    report_period,
+)
 from backend.app.services.validation import validate_service_event
-from backend.app.ui import home_page, machine_register_page, reports_page
+from backend.app.ui import holiday_calendar_page, home_page, machine_register_page, reports_page
 
 router = APIRouter()
 
@@ -68,6 +80,11 @@ def quarterly_reports_page() -> str:
 @router.get("/machines", response_class=HTMLResponse, include_in_schema=False)
 def machines_page() -> str:
     return machine_register_page()
+
+
+@router.get("/holidays", response_class=HTMLResponse, include_in_schema=False)
+def holidays_page() -> str:
+    return holiday_calendar_page()
 
 
 @router.get("/review", response_class=HTMLResponse, include_in_schema=False)
@@ -662,6 +679,39 @@ def update_machine(machine_id: int, request: MachineRegistrationInput) -> Regist
     return machine
 
 
+@router.get("/v1/holidays", response_model=list[Holiday])
+def holidays(year: int) -> list[Holiday]:
+    if year < 2020 or year > 2100:
+        raise HTTPException(status_code=422, detail="Year must be between 2020 and 2100.")
+    return list_holidays(year)
+
+
+@router.post("/v1/holidays", response_model=Holiday, status_code=201)
+def add_holiday(request: HolidayInput) -> Holiday:
+    try:
+        return create_holiday(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.put("/v1/holidays/{holiday_id}", response_model=Holiday)
+def edit_holiday(holiday_id: int, request: HolidayInput) -> Holiday:
+    try:
+        holiday = update_holiday(holiday_id, request)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if not holiday:
+        raise HTTPException(status_code=404, detail="Holiday not found.")
+    return holiday
+
+
+@router.delete("/v1/holidays/{holiday_id}", status_code=204)
+def remove_holiday(holiday_id: int) -> Response:
+    if not delete_holiday(holiday_id):
+        raise HTTPException(status_code=404, detail="Holiday not found.")
+    return Response(status_code=204)
+
+
 @router.get("/v1/reports/filter-options", response_model=ReportFilterOptions)
 def stored_report_filter_options() -> ReportFilterOptions:
     """List sites and PCSNs available for editable report filter controls."""
@@ -683,8 +733,7 @@ def _build_stored_quarterly_report(request: StoredQuarterlyReportRequest) -> Qua
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No report-ready stored service events are available.",
         )
-    return build_quarterly_report(
-        QuarterlyReportRequest(
+    report_request = QuarterlyReportRequest(
             year=request.year,
             quarter=request.quarter,
             start_date=request.start_date,
@@ -696,6 +745,16 @@ def _build_stored_quarterly_report(request: StoredQuarterlyReportRequest) -> Qua
             site_name=request.site_name,
             pcsn=request.pcsn,
             events=events,
+        )
+    period = report_period(report_request)
+    return build_quarterly_report(
+        report_request.model_copy(
+            update={
+                "holiday_dates": holiday_dates_for_range(
+                    period.start_date, period.end_date
+                ),
+                "use_supplied_holiday_calendar": True,
+            }
         )
     )
 
