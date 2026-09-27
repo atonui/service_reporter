@@ -1,3 +1,5 @@
+from calendar import monthrange
+from datetime import date
 from typing import Annotated
 
 from fastapi import APIRouter, File, HTTPException, Response, UploadFile, status
@@ -19,6 +21,9 @@ from backend.app.schemas.report import (
     QuarterlyReportRequest,
     ReportFilterOptions,
     StoredQuarterlyReportRequest,
+    StoredTrendReportRequest,
+    TrendPoint,
+    TrendReport,
 )
 from backend.app.schemas.report_profile import ReportProfile, ReportProfileInput
 from backend.app.schemas.service_event import ServiceEvent
@@ -706,7 +711,7 @@ def update_stored_service_event(event_id: int, request: EventCorrectionRequest) 
 
 @router.post("/v1/service-events/{event_id}/approve", response_model=StoredServiceEvent)
 def approve_stored_service_event(event_id: int, request: EventApprovalRequest) -> dict:
-    """Approve a reviewed event so stored quarterly reports can include it."""
+    """Approve a reviewed event so stored reports can include it."""
     try:
         record = approve_event(event_id, request)
     except ValueError as exc:
@@ -738,6 +743,67 @@ def restore_stored_service_event(event_id: int, request: EventArchiveRequest) ->
 def stored_quarterly_report(request: StoredQuarterlyReportRequest) -> QuarterlyReport:
     """Build a report from all stored, report-ready service events."""
     return _build_stored_quarterly_report(request)
+
+
+def _trend_periods(start_date: date, end_date: date, interval: str):
+    current = start_date
+    while current <= end_date:
+        if interval == "quarter":
+            first_month = ((current.month - 1) // 3) * 3 + 1
+            natural_start = date(current.year, first_month, 1)
+            last_month = first_month + 2
+            natural_end = date(current.year, last_month, monthrange(current.year, last_month)[1])
+        else:
+            natural_start = date(current.year, current.month, 1)
+            natural_end = date(current.year, current.month, monthrange(current.year, current.month)[1])
+        period_start = max(start_date, natural_start)
+        period_end = min(end_date, natural_end)
+        if interval == "quarter":
+            label = f"Q{((first_month - 1) // 3) + 1} {current.year}"
+        else:
+            label = period_start.strftime("%b %Y")
+        yield label, period_start, period_end
+        if natural_end.month == 12:
+            current = date(natural_end.year + 1, 1, 1)
+        else:
+            current = date(natural_end.year, natural_end.month + 1, 1)
+
+
+@router.post("/v1/reports/trends/stored", response_model=TrendReport)
+def stored_trend_report(request: StoredTrendReportRequest) -> TrendReport:
+    """Build month- or quarter-level trend points using the normal report calculation."""
+    points: list[TrendPoint] = []
+    for label, period_start, period_end in _trend_periods(
+        request.start_date, request.end_date, request.interval
+    ):
+        report = _build_stored_quarterly_report(
+            StoredQuarterlyReportRequest(
+                start_date=period_start,
+                end_date=period_end,
+                report_profile_id=request.report_profile_id,
+                site_name=request.site_name,
+                pcsn=request.pcsn,
+            )
+        )
+        points.append(
+            TrendPoint(
+                period=report.period.model_copy(update={"label": label}),
+                events=report.events_in_period,
+                corrective_events=sum(item.corrective_event_count for item in report.machine_breakdown),
+                machine_count=report.machine_count,
+                working_hours_basis=report.working_hours_basis,
+                unplanned_downtime_hours=report.unplanned_downtime_hours,
+                uptime_percent=report.uptime_percent,
+            )
+        )
+    return TrendReport(
+        interval=request.interval,
+        start_date=request.start_date,
+        end_date=request.end_date,
+        site_name=request.site_name,
+        pcsn=request.pcsn,
+        points=points,
+    )
 
 
 @router.get("/v1/machines", response_model=list[RegisteredMachine])
@@ -948,7 +1014,7 @@ def _build_stored_quarterly_report(request: StoredQuarterlyReportRequest) -> Qua
     responses={200: {"content": {"application/pdf": {}}}},
 )
 def stored_quarterly_report_pdf(request: StoredQuarterlyReportRequest) -> Response:
-    """Download the stored quarterly report as a printable PDF."""
+    """Download the stored service report as a printable PDF."""
     report = _build_stored_quarterly_report(request)
     content = render_quarterly_report_pdf(report)
     if request.start_date and request.end_date:

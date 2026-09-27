@@ -31,7 +31,7 @@ def _value(value: object | None, fallback: str = "-") -> str:
 
 
 def render_quarterly_report_pdf(report: QuarterlyReport) -> bytes:
-    """Render a management-ready PDF from an already calculated quarterly report."""
+    """Render a management-ready PDF from an already calculated service report."""
     buffer = BytesIO()
     document = SimpleDocTemplate(
         buffer,

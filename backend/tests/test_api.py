@@ -106,6 +106,7 @@ def test_quarterly_reports_page_uses_stored_report_endpoints() -> None:
     assert "/v1/reports/quarterly/stored" in response.text
     assert "/v1/reports/quarterly/stored/pdf" in response.text
     assert "/v1/reports/quarterly/stored/xlsx" in response.text
+    assert "/v1/reports/trends/stored" in response.text
     assert "Download PDF" in response.text
     assert "Download Excel" in response.text
     assert 'list="site-options"' in response.text
@@ -305,6 +306,14 @@ def test_stored_quarterly_report_endpoint(monkeypatch, tmp_path) -> None:
         "/v1/reports/quarterly/stored/xlsx",
         json={"year": 2026, "quarter": 3, "working_hours_basis": "504"},
     )
+    trend = client.post(
+        "/v1/reports/trends/stored",
+        json={
+            "start_date": "2026-07-01",
+            "end_date": "2026-09-30",
+            "interval": "month",
+        },
+    )
 
     assert saved.status_code == 200
     assert len(saved.json()) == 1
@@ -336,6 +345,17 @@ def test_stored_quarterly_report_endpoint(monkeypatch, tmp_path) -> None:
         assert sheet_name in workbook_xml
     assert "PCSN" in shared_strings
     assert "Product" not in shared_strings
+    assert trend.status_code == 200
+    trend_data = trend.json()
+    assert [point["period"]["label"] for point in trend_data["points"]] == [
+        "Jul 2026",
+        "Aug 2026",
+        "Sep 2026",
+    ]
+    assert sum(point["events"] for point in trend_data["points"]) == 1
+    assert sum(
+        float(point["unplanned_downtime_hours"]) for point in trend_data["points"]
+    ) == 4.5
 
 
 def test_stored_report_uses_selected_working_calendar_profile(monkeypatch, tmp_path) -> None:

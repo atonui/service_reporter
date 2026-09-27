@@ -58,6 +58,23 @@ class StoredQuarterlyReportRequest(StrictModel):
         return self
 
 
+class StoredTrendReportRequest(StrictModel):
+    start_date: date
+    end_date: date
+    interval: Literal["month", "quarter"] = "month"
+    report_profile_id: int | None = Field(default=None, ge=1)
+    site_name: str | None = None
+    pcsn: str | None = Field(default=None, pattern=r"^[A-Za-z0-9]+$")
+
+    @model_validator(mode="after")
+    def valid_range(self) -> StoredTrendReportRequest:
+        if self.end_date < self.start_date:
+            raise ValueError("end_date cannot be before start_date")
+        if (self.end_date - self.start_date).days > 3660:
+            raise ValueError("trend range cannot exceed 10 years")
+        return self
+
+
 def _validate_period_fields(
     year: int | None,
     quarter: int | None,
@@ -170,3 +187,22 @@ class QuarterlyReport(StrictModel):
         if self.events_in_period + self.events_outside_period != self.events_received:
             raise ValueError("event counts do not reconcile")
         return self
+
+
+class TrendPoint(StrictModel):
+    period: ReportPeriod
+    events: int = Field(ge=0)
+    corrective_events: int = Field(ge=0)
+    machine_count: int = Field(ge=0)
+    working_hours_basis: Decimal | None = Field(default=None, gt=0, decimal_places=2)
+    unplanned_downtime_hours: Decimal = Field(ge=0, decimal_places=2)
+    uptime_percent: Decimal | None = Field(default=None, ge=0, le=100, decimal_places=2)
+
+
+class TrendReport(StrictModel):
+    interval: Literal["month", "quarter"]
+    start_date: date
+    end_date: date
+    site_name: str | None = None
+    pcsn: str | None = None
+    points: list[TrendPoint]
