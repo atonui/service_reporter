@@ -22,6 +22,8 @@ from backend.app.schemas.report import (
 from backend.app.schemas.service_event import ServiceEvent
 from backend.app.services.machine_identity import normalize_pcsn, pcsn_details, site_name_for_pcsn
 from backend.app.services.business_calendar import operating_hours, standard_kenya_holidays
+from backend.app.services.customer_alias_store import canonical_customer_name, normalize_customer_key
+from backend.app.services.product_catalog_store import product_catalog_map
 
 ZERO = Decimal("0.00")
 UNPLANNED_TYPES = {"corrective_breakdown"}
@@ -90,10 +92,16 @@ def _site_name(event: ServiceEvent) -> str:
     return "Unknown site"
 
 
-def report_filter_options(events: list[ServiceEvent]) -> ReportFilterOptions:
+def report_filter_options(
+    events: list[ServiceEvent], aliases: dict[str, str] | None = None
+) -> ReportFilterOptions:
     """Return canonical filter suggestions while keeping the UI inputs editable."""
     sites = sorted(
-        {_site_name(event) for event in events if _site_name(event) != "Unknown site"},
+        {
+            canonical_customer_name(_site_name(event), aliases or {})
+            for event in events
+            if _site_name(event) != "Unknown site"
+        },
         key=str.casefold,
     )
     pcsns = sorted({pcsn for event in events if (pcsn := _pcsn(event))})
@@ -101,7 +109,7 @@ def report_filter_options(events: list[ServiceEvent]) -> ReportFilterOptions:
 
 
 def _site_key(value: str) -> str:
-    return re.sub(r"[^a-z0-9]", "", value.casefold())
+    return normalize_customer_key(value)
 
 
 def _quarter_period(year: int, quarter: int) -> ReportPeriod:
@@ -146,16 +154,25 @@ def _metric_rows(values: dict[str, tuple[int, Decimal]]) -> list[MetricCount]:
 def build_quarterly_report(request: QuarterlyReportRequest) -> QuarterlyReport:
     period = report_period(request)
     requested_pcsn = normalize_pcsn(request.pcsn)
-    requested_site = _site_key(request.site_name) if request.site_name else None
+    requested_site = (
+        _site_key(canonical_customer_name(request.site_name, request.customer_aliases))
+        if request.site_name
+        else None
+    )
     registrations = {
         normalize_pcsn(machine.pcsn): machine
         for machine in request.registered_machines
         if normalize_pcsn(machine.pcsn)
     }
+    product_catalog = product_catalog_map()
+
+    def canonical_customer(value: str) -> str:
+        return canonical_customer_name(value, request.customer_aliases)
 
     def event_customer(event: ServiceEvent) -> str:
         registered = registrations.get(_pcsn(event))
-        return registered.customer_name if registered else _site_name(event)
+        value = registered.customer_name if registered else _site_name(event)
+        return canonical_customer(value)
 
     filtered_events = [
         event
@@ -173,7 +190,7 @@ def build_quarterly_report(request: QuarterlyReportRequest) -> QuarterlyReport:
             continue
         if requested_pcsn and pcsn != requested_pcsn:
             continue
-        if requested_site and _site_key(machine.customer_name) != requested_site:
+        if requested_site and _site_key(canonical_customer(machine.customer_name)) != requested_site:
             continue
         machine_registry[pcsn] = (None, machine)
     for event in filtered_events:
@@ -295,7 +312,11 @@ def build_quarterly_report(request: QuarterlyReportRequest) -> QuarterlyReport:
             for holiday_date, _name in standard_kenya_holidays(year)
         }
     default_basis = request.per_machine_basis() or operating_hours(
-        period.start_date, period.end_date, holiday_dates
+        period.start_date,
+        period.end_date,
+        holiday_dates,
+        set(request.operating_weekdays),
+        request.daily_operating_hours,
     )
     overrides = {
         normalize_pcsn(key): Decimal(value)
@@ -317,7 +338,7 @@ def build_quarterly_report(request: QuarterlyReportRequest) -> QuarterlyReport:
         )
         downtime = machine_downtime[pcsn]
         machine_uptime = _q(max(ZERO, (basis - downtime) / basis * Decimal(100))) if basis else None
-        identity = pcsn_details(pcsn)
+        identity = pcsn_details(pcsn, product_catalog)
         machine_rows.append(
             MachineAvailability(
                 pcsn=pcsn,
@@ -325,7 +346,9 @@ def build_quarterly_report(request: QuarterlyReportRequest) -> QuarterlyReport:
                 or (event.machine.product_code if event else None)
                 or identity["product_code"],
                 model=(event.machine.model if event else None) or identity["model"],
-                site_name=registered.customer_name if registered else _site_name(event),
+                site_name=canonical_customer(
+                    registered.customer_name if registered else _site_name(event)
+                ),
                 event_count=machine_events[pcsn],
                 corrective_event_count=machine_corrective_events[pcsn],
                 unplanned_downtime_hours=_q(downtime),

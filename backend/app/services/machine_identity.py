@@ -22,13 +22,20 @@ def normalize_pcsn(value: str | None) -> str | None:
     return normalized or None
 
 
-def pcsn_details(value: str | None) -> dict[str, str | None]:
+def pcsn_details(
+    value: str | None, catalog: dict[str, str] | None = None
+) -> dict[str, str | None]:
     """Resolve a PCSN using known product-code prefixes; never guess an unknown boundary."""
     pcsn = normalize_pcsn(value)
     if not pcsn:
         return {"pcsn": None, "product_code": None, "serial_number": None, "model": None}
+    resolved_catalog = catalog if catalog is not None else PRODUCT_CATALOG
     prefix = next(
-        (code for code in sorted(PRODUCT_CATALOG, key=len, reverse=True) if pcsn.startswith(code)),
+        (
+            code
+            for code in sorted(resolved_catalog, key=len, reverse=True)
+            if pcsn.startswith(code)
+        ),
         None,
     )
     if not prefix:
@@ -40,7 +47,7 @@ def pcsn_details(value: str | None) -> dict[str, str | None]:
         "pcsn": pcsn,
         "product_code": prefix,
         "serial_number": serial,
-        "model": PRODUCT_CATALOG[prefix],
+        "model": resolved_catalog[prefix],
     }
 
 

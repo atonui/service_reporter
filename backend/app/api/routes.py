@@ -4,43 +4,51 @@ from fastapi import APIRouter, File, HTTPException, Response, UploadFile, status
 from fastapi.responses import HTMLResponse
 from starlette.concurrency import run_in_threadpool
 
+from backend.app.schemas.customer_alias import CustomerAlias, CustomerAliasInput
 from backend.app.schemas.document import ParsedDocument
 from backend.app.schemas.extraction import (
     BatchExtractionItem,
     BatchExtractionResult,
     ExtractionResult,
 )
-from backend.app.schemas.machine_registry import MachineRegistrationInput, RegisteredMachine
 from backend.app.schemas.holiday import Holiday, HolidayInput
+from backend.app.schemas.machine_registry import MachineRegistrationInput, RegisteredMachine
+from backend.app.schemas.product_catalog import ProductCatalogEntry, ProductCatalogInput
 from backend.app.schemas.report import (
     QuarterlyReport,
     QuarterlyReportRequest,
     ReportFilterOptions,
     StoredQuarterlyReportRequest,
 )
+from backend.app.schemas.report_profile import ReportProfile, ReportProfileInput
 from backend.app.schemas.service_event import ServiceEvent
 from backend.app.schemas.storage import (
     EventApprovalRequest,
+    EventArchiveRequest,
     EventCorrectionRequest,
     StoredServiceEvent,
 )
+from backend.app.services.customer_alias_store import (
+    canonical_customer_name,
+    create_customer_alias,
+    customer_alias_map,
+    delete_customer_alias,
+    list_customer_aliases,
+)
 from backend.app.services.event_store import (
     approve_event,
+    archive_event,
     correct_event,
     get_event,
     list_events,
     reportable_events,
+    restore_event,
     save_extraction,
 )
 from backend.app.services.extraction import (
     ExtractionConfigurationError,
     ExtractionError,
     extract_service_event,
-)
-from backend.app.services.machine_store import (
-    create_registered_machine,
-    list_registered_machines,
-    update_registered_machine,
 )
 from backend.app.services.holiday_store import (
     create_holiday,
@@ -49,20 +57,45 @@ from backend.app.services.holiday_store import (
     list_holidays,
     update_holiday,
 )
+from backend.app.services.machine_store import (
+    create_registered_machine,
+    list_registered_machines,
+    update_registered_machine,
+)
 from backend.app.services.pdf_parser import (
     MAX_PDF_BYTES,
     OcrError,
     PdfValidationError,
     parse_pdf_bytes_with_ocr,
 )
+from backend.app.services.product_catalog_store import (
+    create_product_catalog_entry,
+    delete_product_catalog_entry,
+    list_product_catalog,
+    update_product_catalog_entry,
+)
+from backend.app.services.report_excel import render_quarterly_report_excel
 from backend.app.services.report_pdf import render_quarterly_report_pdf
+from backend.app.services.report_profile_store import (
+    create_report_profile,
+    delete_report_profile,
+    get_report_profile,
+    list_report_profiles,
+    update_report_profile,
+)
 from backend.app.services.reporting import (
     build_quarterly_report,
     report_filter_options,
     report_period,
 )
 from backend.app.services.validation import validate_service_event
-from backend.app.ui import holiday_calendar_page, home_page, machine_register_page, reports_page
+from backend.app.ui import (
+    holiday_calendar_page,
+    home_page,
+    machine_register_page,
+    report_profiles_page,
+    reports_page,
+)
 
 router = APIRouter()
 
@@ -87,6 +120,11 @@ def holidays_page() -> str:
     return holiday_calendar_page()
 
 
+@router.get("/report-profiles", response_class=HTMLResponse, include_in_schema=False)
+def report_profile_page() -> str:
+    return report_profiles_page()
+
+
 @router.get("/review", response_class=HTMLResponse, include_in_schema=False)
 def review_page() -> str:
     """Browser review console for corrections, approval, and audit history."""
@@ -97,11 +135,11 @@ def review_page() -> str:
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Service Intelligence - Event Review</title>
   <style>
-    :root { --navy:#17324d; --blue:#2878b5; --pale:#eaf3f9; --line:#ced8e1; --text:#263442; --danger:#a52828; --success:#19723b; }
+    :root { --navy:#006b6b; --blue:#009999; --orange:#ec6602; --orange-dark:#b94f00; --pale:#e6f5f5; --line:#c9dddd; --text:#273536; --danger:#a52828; --success:#19723b; }
     * { box-sizing:border-box; }
     body { margin:0; background:#f4f7fa; color:var(--text); font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; }
     main { width:min(1180px,calc(100% - 32px)); margin:32px auto; }
-    .card { background:white; border:1px solid var(--line); border-radius:14px; padding:24px; box-shadow:0 10px 30px rgba(23,50,77,.08); }
+    .card { background:white; border:1px solid var(--line); border-radius:14px; padding:24px; box-shadow:0 10px 30px rgba(0,107,107,.08); border-top:4px solid var(--orange); }
     h1,h2 { color:var(--navy); } h1 { margin:0 0 6px; } h2 { margin:0 0 12px; font-size:19px; }
     .layout { display:grid; grid-template-columns:320px 1fr; gap:22px; margin-top:22px; }
     #events { list-style:none; margin:0; padding:0; max-height:680px; overflow:auto; }
@@ -114,7 +152,7 @@ def review_page() -> str:
     label { display:block; font-weight:700; color:var(--navy); }
     .review-form { display:grid; gap:14px; }
     .field-card { display:grid; grid-template-columns:minmax(260px,1fr) minmax(260px,.9fr); gap:16px; padding:15px; border:1px solid var(--line); border-radius:10px; background:#fff; }
-    .field-card:focus-within { border-color:var(--blue); box-shadow:0 0 0 2px rgba(40,120,181,.1); }
+    .field-card:focus-within { border-color:var(--blue); box-shadow:0 0 0 2px rgba(0,153,153,.12); }
     .hint { color:#647483; font-size:12px; font-weight:400; margin-top:4px; }
     .evidence { background:#f6f8fa; border-left:3px solid var(--blue); border-radius:6px; padding:10px; min-height:64px; }
     .evidence strong { display:block; color:var(--navy); font-size:12px; text-transform:uppercase; letter-spacing:.04em; }
@@ -134,7 +172,7 @@ def review_page() -> str:
     .review-flags:empty { display:none; }
     .form { display:grid; grid-template-columns:1fr 2fr; gap:12px; margin:16px 0 12px; }
     .actions { display:flex; gap:10px; align-items:center; }
-    button { border:0; border-radius:8px; padding:10px 15px; background:var(--navy); color:white; font-weight:700; cursor:pointer; }
+    button { border:0; border-radius:8px; padding:10px 15px; background:var(--orange-dark); color:white; font-weight:700; cursor:pointer; }
     button.secondary { background:var(--blue); } button:disabled { opacity:.45; cursor:not-allowed; }
     #message { font-weight:600; } .error { color:var(--danger); } .ok { color:var(--success); }
     details { margin-top:18px; } details summary { cursor:pointer; color:var(--navy); font-weight:700; }
@@ -142,7 +180,8 @@ def review_page() -> str:
     .history-entry { border:1px solid var(--line); border-radius:9px; overflow:hidden; }
     .history-head { display:grid; grid-template-columns:auto 1fr auto; gap:10px; align-items:center; padding:10px 12px; background:#f6f8fa; }
     .history-action { display:inline-block; border-radius:12px; padding:2px 8px; background:#dcecf7; color:var(--navy); font-size:12px; font-weight:800; text-transform:uppercase; }
-    .history-action.approval { background:#d9f2e2; color:var(--success); }
+    .history-action.approval,.history-action.restore { background:#d9f2e2; color:var(--success); }
+    .history-action.archive { background:#f7dddd; color:var(--danger); }
     .history-date { color:#647483; font-size:12px; }
     .history-note { margin:0; padding:8px 12px; color:#4c5b68; border-top:1px solid var(--line); }
     .change-table { width:100%; border-collapse:collapse; }
@@ -156,9 +195,9 @@ def review_page() -> str:
 </head>
 <body><main><section class="card">
   <h1>Service Event Review</h1>
-  <p>Correct a saved event, then approve it for quarterly reporting. Every change is retained.</p>
+  <p>Correct and approve saved events for reporting, or archive erroneous records without deleting their history.</p>
   <div class="layout">
-    <aside><h2>Saved events</h2><ul id="events"></ul></aside>
+    <aside><h2>Saved events</h2><label><input id="include-archived" type="checkbox"> Show archived</label><ul id="events"></ul></aside>
     <section>
       <h2 id="title">Select an event</h2>
       <ul id="review-flags" class="review-flags"></ul>
@@ -166,6 +205,8 @@ def review_page() -> str:
         <div class="field-card"><label>Customer<input id="customer" autocomplete="off"><span class="hint">Customer and site are one identity.</span></label><div id="evidence-customer" class="evidence"></div></div>
         <div class="field-card"><label>PCSN<input id="pcsn" pattern="[A-Za-z0-9]+" autocomplete="off"></label><div id="evidence-pcsn" class="evidence"></div></div>
         <div class="field-card"><label>Service type<select id="service-type"><option value="preventive_maintenance">Preventive maintenance</option><option value="corrective_breakdown">Corrective breakdown</option><option value="remote_support">Remote support</option><option value="customer_request">Customer request</option><option value="training">Training</option><option value="other">Other</option><option value="unknown">Unknown</option></select></label><div id="evidence-service-type" class="evidence"></div></div>
+        <div class="field-card"><label>Fault category<input id="fault-category" list="fault-category-options" autocomplete="off" placeholder="Select or enter a category"><datalist id="fault-category-options"><option value="MLC"><option value="Beam generation"><option value="Imaging"><option value="Patient support"><option value="Cooling"><option value="Electrical power"><option value="Software and controls"><option value="Vacuum"><option value="Safety system"><option value="Mechanical"><option value="Dosimetry and beam quality"><option value="Other"></datalist><span class="hint">Use the suggested taxonomy where possible; free entry remains available.</span></label><div id="evidence-fault-category" class="evidence"></div></div>
+        <div class="field-card"><label>Fault subcategory<input id="fault-subcategory" list="fault-subcategory-options" autocomplete="off" placeholder="Select or enter a subcategory"><datalist id="fault-subcategory-options"><option value="MLC interlock"><option value="MLC leaf or motor"><option value="Modulator / thyratron"><option value="Gun / filament"><option value="RF driver / klystron"><option value="Beam steering / tuning"><option value="kV imaging / CBCT"><option value="MV imaging"><option value="Patient support / couch"><option value="Chiller / water cooling"><option value="Mains / UPS / power supply"><option value="Software / workstation"><option value="Network / communication"><option value="Vacuum / HVOC"><option value="Door / safety interlock"><option value="Mechanical motion"><option value="Dosimetry / calibration"></datalist></label><div id="evidence-fault-subcategory" class="evidence"></div></div>
         <div class="field-card"><label>Reported downtime (hours)<input id="downtime" type="number" min="0" step="0.01" placeholder="Not reported"><span class="hint">Only corrective-breakdown downtime reduces uptime.</span></label><div id="evidence-downtime" class="evidence"></div></div>
         <div class="field-card"><label>Subject<textarea id="subject"></textarea></label><div id="evidence-subject" class="evidence"></div></div>
         <div class="field-card"><label>Intervention<textarea id="intervention"></textarea><span class="hint">Use the source wording from the work order.</span></label><div id="evidence-intervention" class="evidence"></div></div>
@@ -173,14 +214,16 @@ def review_page() -> str:
       </form>
       <div class="form">
         <label>Reviewer<input id="actor" placeholder="Your name"></label>
-        <label>Note (optional)<input id="note" placeholder="What was checked or corrected"></label>
+        <label>Note / archive reason<input id="note" placeholder="What was checked, corrected, or why this record is archived"></label>
       </div>
       <div class="actions">
         <button id="save" class="secondary" disabled>Save correction</button>
         <button id="approve" disabled>Approve for reports</button>
+        <button id="archive" class="remove" disabled>Archive event</button>
+        <button id="restore" class="secondary" hidden disabled>Restore event</button>
         <span id="message" role="status"></span>
       </div>
-      <details open><summary>Correction and approval history</summary><div id="history" class="history-list"></div></details>
+      <details open><summary>Event history</summary><div id="history" class="history-list"></div></details>
     </section>
   </div>
     <div class="links"><a href="/">Home</a><a href="/batch-upload">Batch upload</a><a href="/reports">Reports</a><a href="/docs">API documentation</a></div>
@@ -192,6 +235,8 @@ def review_page() -> str:
   const customer = document.getElementById('customer');
   const pcsn = document.getElementById('pcsn');
   const serviceType = document.getElementById('service-type');
+  const faultCategory = document.getElementById('fault-category');
+  const faultSubcategory = document.getElementById('fault-subcategory');
   const downtime = document.getElementById('downtime');
   const subject = document.getElementById('subject');
   const intervention = document.getElementById('intervention');
@@ -201,6 +246,9 @@ def review_page() -> str:
   const note = document.getElementById('note');
   const save = document.getElementById('save');
   const approve = document.getElementById('approve');
+  const archive = document.getElementById('archive');
+  const restore = document.getElementById('restore');
+  const includeArchived = document.getElementById('include-archived');
   const message = document.getElementById('message');
   const history = document.getElementById('history');
   let selected = null, dirty = false;
@@ -213,12 +261,13 @@ def review_page() -> str:
     return payload;
   }
   async function refresh(selectId=null) {
-    const records = await request('/v1/service-events?include_review_required=true');
+    const records = await request('/v1/service-events?include_review_required=true&include_archived='+includeArchived.checked);
     list.replaceChildren();
+    if (selectId===null) { selected=null;fieldEditor.hidden=true;title.textContent='Select an event';save.disabled=true;approve.disabled=true;archive.disabled=true;restore.hidden=true; }
     records.forEach(record => {
       const item=document.createElement('li'); const button=document.createElement('button');
-      const badge=document.createElement('span'); badge.className='badge '+(record.approval_status==='approved'?'approved':'');
-      badge.textContent=record.approval_status==='approved'?'approved':'review';
+      const badge=document.createElement('span'); badge.className='badge '+(record.archived?'':record.approval_status==='approved'?'approved':'');
+      badge.textContent=record.archived?'archived':record.approval_status==='approved'?'approved':'review';
       button.textContent=record.event.identification.work_order_number+' ';
       button.append(badge); button.onclick=()=>selectRecord(record,button); item.append(button); list.append(item);
       if (record.id === selectId) selectRecord(record,button);
@@ -259,7 +308,7 @@ def review_page() -> str:
   }
   const fieldLabels={
     'customer_site.customer_name':'Customer','customer_site.site_name':'Customer','machine.pcsn':'PCSN','machine.asset_id':'PCSN',
-    'classification.service_type':'Service type','timing.reported_downtime_hours':'Reported downtime','classification.raw_subject':'Subject',
+    'classification.service_type':'Service type','classification.fault_category':'Fault category','classification.fault_subcategory':'Fault subcategory','timing.reported_downtime_hours':'Reported downtime','classification.raw_subject':'Subject',
     'intervention.raw_closure_summary':'Intervention','intervention.normalized_summary':'Normalized intervention','intervention.activities':'Intervention activities'
   };
   function friendlyField(path) {
@@ -281,7 +330,7 @@ def review_page() -> str:
     [...entries].reverse().forEach(entry=>{
       const card=document.createElement('section');card.className='history-entry';
       const head=document.createElement('div');head.className='history-head';
-      const action=document.createElement('span');action.className='history-action '+(entry.action==='approval'?'approval':'');action.textContent=entry.action;
+      const action=document.createElement('span');action.className='history-action '+entry.action;action.textContent=entry.action;
       const actorName=document.createElement('strong');actorName.textContent=entry.actor;
       const date=document.createElement('span');date.className='history-date';date.textContent=new Date(entry.timestamp).toLocaleString();head.append(action,actorName,date);card.append(head);
       if (entry.note) { const noteText=document.createElement('p');noteText.className='history-note';noteText.textContent=entry.note;card.append(noteText); }
@@ -294,10 +343,12 @@ def review_page() -> str:
   }
   function selectRecord(record, button) {
     selected=record; document.querySelectorAll('#events button').forEach(x=>x.classList.remove('selected')); button.classList.add('selected');
-    title.textContent=record.event.identification.work_order_number+' — '+record.approval_status;
+    title.textContent=record.event.identification.work_order_number+' — '+(record.archived?'archived':record.approval_status);
     customer.value=record.event.customer_site.customer_name||record.event.customer_site.site_name||'';
     pcsn.value=record.event.machine.pcsn||record.event.machine.asset_id||'';
     serviceType.value=record.event.classification.service_type;
+    faultCategory.value=record.event.classification.fault_category||'';
+    faultSubcategory.value=record.event.classification.fault_subcategory||'';
     downtime.value=record.event.timing.reported_downtime_hours??'';
     subject.value=record.event.classification.raw_subject||'';
     intervention.value=record.event.intervention.raw_closure_summary||record.event.intervention.normalized_summary||'';
@@ -305,11 +356,13 @@ def review_page() -> str:
     renderEvidence('evidence-customer',['customer_site.customer_name','customer_site.site_name']);
     renderEvidence('evidence-pcsn',['machine.pcsn','machine.asset_id']);
     renderEvidence('evidence-service-type',['classification.service_type']);
+    renderEvidence('evidence-fault-category',['classification.fault_category','classification.raw_subject'],['diagnosis.','intervention.']);
+    renderEvidence('evidence-fault-subcategory',['classification.fault_subcategory','classification.raw_subject'],['diagnosis.','intervention.']);
     renderEvidence('evidence-downtime',['timing.reported_downtime_hours']);
     renderEvidence('evidence-subject',['classification.raw_subject']);
     renderEvidence('evidence-intervention',['intervention.raw_closure_summary','intervention.normalized_summary'],['intervention.activities']);
     renderEvidence('evidence-parts',[],['parts']);
-    dirty=false; fieldEditor.hidden=false; save.disabled=false; approve.disabled=false;
+    dirty=false; fieldEditor.hidden=false; fieldEditor.querySelectorAll('input,select,textarea,button').forEach(control=>control.disabled=record.archived);save.disabled=record.archived;approve.disabled=record.archived;archive.hidden=record.archived;archive.disabled=record.archived;restore.hidden=!record.archived;restore.disabled=!record.archived;
     renderHistory(record.correction_history); setMessage('');
   }
   function correctedEvent() {
@@ -318,6 +371,8 @@ def review_page() -> str:
     event.customer_site.customer_name=name; event.customer_site.site_name=name;
     event.machine.pcsn=identity; event.machine.asset_id=identity;
     event.classification.service_type=serviceType.value;
+    event.classification.fault_category=faultCategory.value.trim()||null;
+    event.classification.fault_subcategory=faultSubcategory.value.trim()||null;
     event.timing.reported_downtime_hours=downtime.value===''?null:downtime.value;
     event.classification.raw_subject=subject.value.trim()||null;
     const changedIntervention=intervention.value.trim()!==(event.intervention.raw_closure_summary||event.intervention.normalized_summary||'');
@@ -336,10 +391,19 @@ def review_page() -> str:
       await refresh(selected.id); setMessage(kind==='save'?'Correction saved; approval is still required.':'Approved and ready for reports.','ok');
     } catch(error) { setMessage(error.message,'error'); save.disabled=false; approve.disabled=dirty; }
   }
+  async function archiveAction(kind) {
+    if (!selected || !actor.value.trim()) { setMessage('Enter the reviewer name.','error'); return; }
+    if (!note.value.trim()) { setMessage('Enter a reason for '+kind+'.','error'); return; }
+    archive.disabled=true; restore.disabled=true; setMessage(kind==='archive'?'Archiving...':'Restoring...');
+    try {
+      await request('/v1/service-events/'+selected.id+'/'+kind,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({actor:actor.value.trim(),reason:note.value.trim()})});
+      const selectedId=kind==='restore'?selected.id:null; await refresh(selectedId); setMessage(kind==='archive'?'Event archived and excluded from reports.':'Event restored.','ok');
+    } catch(error) { setMessage(error.message,'error'); archive.disabled=selected.archived; restore.disabled=!selected.archived; }
+  }
   fieldEditor.addEventListener('input',markDirty);
   fieldEditor.addEventListener('change',markDirty);
   document.getElementById('add-part').onclick=()=>{partRow({quantity:'1'});markDirty()};
-  save.onclick=()=>act('save'); approve.onclick=()=>act('approve');
+  save.onclick=()=>act('save'); approve.onclick=()=>act('approve');archive.onclick=()=>archiveAction('archive');restore.onclick=()=>archiveAction('restore');includeArchived.onchange=()=>refresh().catch(error=>setMessage(error.message,'error'));
   refresh().catch(error=>setMessage(error.message,'error'));
 </script></body></html>"""
 
@@ -354,19 +418,19 @@ def batch_upload_page() -> str:
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Service Intelligence - Batch Upload</title>
   <style>
-    :root { color-scheme: light; --navy:#17324d; --blue:#2878b5; --pale:#eaf3f9; --line:#ced8e1; --text:#263442; --danger:#a52828; --success:#19723b; }
+    :root { color-scheme: light; --navy:#006b6b; --blue:#009999; --orange:#ec6602; --orange-dark:#b94f00; --pale:#e6f5f5; --line:#c9dddd; --text:#273536; --danger:#a52828; --success:#19723b; }
     * { box-sizing:border-box; }
     body { margin:0; background:#f4f7fa; color:var(--text); font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; }
     main { width:min(900px,calc(100% - 32px)); margin:48px auto; }
-    .card { background:white; border:1px solid var(--line); border-radius:14px; padding:28px; box-shadow:0 10px 30px rgba(23,50,77,.08); }
+    .card { background:white; border:1px solid var(--line); border-radius:14px; padding:28px; box-shadow:0 10px 30px rgba(0,107,107,.08); border-top:4px solid var(--orange); }
     h1 { margin:0 0 8px; color:var(--navy); font-size:28px; }
     p { margin:0 0 22px; }
     .drop { display:block; padding:28px; border:2px dashed var(--blue); border-radius:12px; background:var(--pale); text-align:center; cursor:pointer; }
-    .drop:hover { background:#dceef8; }
+    .drop:hover { background:#d8eeee; }
     input[type=file] { position:absolute; width:1px; height:1px; opacity:0; }
     .choose { display:inline-block; padding:10px 16px; border-radius:8px; background:var(--blue); color:white; font-weight:700; }
     #selection { margin:18px 0; padding-left:20px; max-height:180px; overflow:auto; }
-    button { border:0; border-radius:8px; padding:11px 18px; background:var(--navy); color:white; font-weight:700; cursor:pointer; }
+    button { border:0; border-radius:8px; padding:11px 18px; background:var(--orange-dark); color:white; font-weight:700; cursor:pointer; }
     button:disabled { opacity:.45; cursor:not-allowed; }
     #status { margin-left:12px; font-weight:600; }
     .summary { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-top:24px; }
@@ -606,9 +670,11 @@ def quarterly_report(request: QuarterlyReportRequest) -> QuarterlyReport:
 
 
 @router.get("/v1/service-events", response_model=list[StoredServiceEvent])
-def stored_service_events(include_review_required: bool = True) -> list[dict]:
+def stored_service_events(
+    include_review_required: bool = True, include_archived: bool = False
+) -> list[dict]:
     """List persisted extraction records. Use the default view to find records needing review."""
-    return list_events(include_review_required)
+    return list_events(include_review_required, include_archived)
 
 
 @router.get("/v1/service-events/{event_id}", response_model=StoredServiceEvent)
@@ -641,11 +707,30 @@ def update_stored_service_event(event_id: int, request: EventCorrectionRequest) 
 @router.post("/v1/service-events/{event_id}/approve", response_model=StoredServiceEvent)
 def approve_stored_service_event(event_id: int, request: EventApprovalRequest) -> dict:
     """Approve a reviewed event so stored quarterly reports can include it."""
-    record = approve_event(event_id, request)
+    try:
+        record = approve_event(event_id, request)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if not record:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Service event not found."
         )
+    return record
+
+
+@router.post("/v1/service-events/{event_id}/archive", response_model=StoredServiceEvent)
+def archive_stored_service_event(event_id: int, request: EventArchiveRequest) -> dict:
+    record = archive_event(event_id, request)
+    if not record:
+        raise HTTPException(status_code=404, detail="Service event not found.")
+    return record
+
+
+@router.post("/v1/service-events/{event_id}/restore", response_model=StoredServiceEvent)
+def restore_stored_service_event(event_id: int, request: EventArchiveRequest) -> dict:
+    record = restore_event(event_id, request)
+    if not record:
+        raise HTTPException(status_code=404, detail="Service event not found.")
     return record
 
 
@@ -677,6 +762,59 @@ def update_machine(machine_id: int, request: MachineRegistrationInput) -> Regist
     if not machine:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Machine not found.")
     return machine
+
+
+@router.get("/v1/customer-aliases", response_model=list[CustomerAlias])
+def customer_aliases() -> list[CustomerAlias]:
+    return list_customer_aliases()
+
+
+@router.post("/v1/customer-aliases", response_model=CustomerAlias, status_code=201)
+def add_customer_alias(request: CustomerAliasInput) -> CustomerAlias:
+    try:
+        return create_customer_alias(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.delete("/v1/customer-aliases/{alias_id}", status_code=204)
+def remove_customer_alias(alias_id: int) -> Response:
+    if not delete_customer_alias(alias_id):
+        raise HTTPException(status_code=404, detail="Customer alias not found.")
+    return Response(status_code=204)
+
+
+@router.get("/v1/product-catalog", response_model=list[ProductCatalogEntry])
+def product_catalog() -> list[ProductCatalogEntry]:
+    return list_product_catalog()
+
+
+@router.post("/v1/product-catalog", response_model=ProductCatalogEntry, status_code=201)
+def add_product_catalog_entry(request: ProductCatalogInput) -> ProductCatalogEntry:
+    try:
+        return create_product_catalog_entry(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.put("/v1/product-catalog/{entry_id}", response_model=ProductCatalogEntry)
+def edit_product_catalog_entry(
+    entry_id: int, request: ProductCatalogInput
+) -> ProductCatalogEntry:
+    try:
+        entry = update_product_catalog_entry(entry_id, request)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if not entry:
+        raise HTTPException(status_code=404, detail="Product-code entry not found.")
+    return entry
+
+
+@router.delete("/v1/product-catalog/{entry_id}", status_code=204)
+def remove_product_catalog_entry(entry_id: int) -> Response:
+    if not delete_product_catalog_entry(entry_id):
+        raise HTTPException(status_code=404, detail="Product-code entry not found.")
+    return Response(status_code=204)
 
 
 @router.get("/v1/holidays", response_model=list[Holiday])
@@ -712,14 +850,54 @@ def remove_holiday(holiday_id: int) -> Response:
     return Response(status_code=204)
 
 
+@router.get("/v1/report-profiles", response_model=list[ReportProfile])
+def report_profiles() -> list[ReportProfile]:
+    return list_report_profiles()
+
+
+@router.post("/v1/report-profiles", response_model=ReportProfile, status_code=201)
+def add_report_profile(request: ReportProfileInput) -> ReportProfile:
+    try:
+        return create_report_profile(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.put("/v1/report-profiles/{profile_id}", response_model=ReportProfile)
+def edit_report_profile(profile_id: int, request: ReportProfileInput) -> ReportProfile:
+    try:
+        profile = update_report_profile(profile_id, request)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if not profile:
+        raise HTTPException(status_code=404, detail="Report profile not found.")
+    return profile
+
+
+@router.delete("/v1/report-profiles/{profile_id}", status_code=204)
+def remove_report_profile(profile_id: int) -> Response:
+    try:
+        removed = delete_report_profile(profile_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if not removed:
+        raise HTTPException(status_code=404, detail="Report profile not found.")
+    return Response(status_code=204)
+
+
 @router.get("/v1/reports/filter-options", response_model=ReportFilterOptions)
 def stored_report_filter_options() -> ReportFilterOptions:
     """List sites and PCSNs available for editable report filter controls."""
-    options = report_filter_options(reportable_events())
+    aliases = customer_alias_map()
+    options = report_filter_options(reportable_events(), aliases)
     machines = list_registered_machines()
     return ReportFilterOptions(
         sites=sorted(
-            {*options.sites, *(item.customer_name for item in machines)}, key=str.casefold
+            {
+                *options.sites,
+                *(canonical_customer_name(item.customer_name, aliases) for item in machines),
+            },
+            key=str.casefold,
         ),
         pcsns=sorted({*options.pcsns, *(item.pcsn for item in machines)}),
     )
@@ -728,6 +906,9 @@ def stored_report_filter_options() -> ReportFilterOptions:
 def _build_stored_quarterly_report(request: StoredQuarterlyReportRequest) -> QuarterlyReport:
     events = reportable_events()
     machines = list_registered_machines()
+    profile = get_report_profile(request.report_profile_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Report profile not found.")
     if not events and not machines:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -742,6 +923,9 @@ def _build_stored_quarterly_report(request: StoredQuarterlyReportRequest) -> Qua
             working_hours_per_machine=request.working_hours_per_machine,
             machine_hours_overrides=request.machine_hours_overrides,
             registered_machines=machines,
+            customer_aliases=customer_alias_map(),
+            operating_weekdays=profile.working_days,
+            daily_operating_hours=profile.daily_hours,
             site_name=request.site_name,
             pcsn=request.pcsn,
             events=events,
@@ -774,5 +958,30 @@ def stored_quarterly_report_pdf(request: StoredQuarterlyReportRequest) -> Respon
     return Response(
         content=content,
         media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
+
+
+@router.post(
+    "/v1/reports/quarterly/stored/xlsx",
+    responses={
+        200: {
+            "content": {
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {}
+            }
+        }
+    },
+)
+def stored_quarterly_report_excel(request: StoredQuarterlyReportRequest) -> Response:
+    """Download the stored report as a formatted Excel workbook."""
+    report = _build_stored_quarterly_report(request)
+    content = render_quarterly_report_excel(report)
+    if request.start_date and request.end_date:
+        file_name = f"service-report-{request.start_date}-to-{request.end_date}.xlsx"
+    else:
+        file_name = f"service-report-Q{request.quarter}-{request.year}.xlsx"
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
     )

@@ -17,9 +17,11 @@ from backend.app.schemas.service_event import (
     ExtractedServiceEvent,
     ServiceEvent,
 )
+from backend.app.services.fault_taxonomy import classify_fault
+from backend.app.services.machine_identity import pcsn_details, site_name_for_pcsn
+from backend.app.services.product_catalog_store import product_catalog_map
 from backend.app.services.review import review_event
 from backend.app.services.validation import derive_metrics
-from backend.app.services.machine_identity import pcsn_details, site_name_for_pcsn
 
 DEFAULT_MODEL = "gpt-4o-mini"
 DEFAULT_MAX_OUTPUT_TOKENS = 16_000
@@ -40,6 +42,9 @@ claims; keep each source quote under 240 characters; and do not repeat document 
 summaries. Prefer null or an empty list to speculative detail.
 Return only one valid JSON object. Omit fields that are absent rather than inventing values.
 Do not include source_document or computed; the application supplies those trusted fields.
+For classification.fault_category, prefer one of: MLC, Beam generation, Imaging, Patient support,
+Cooling, Electrical power, Software and controls, Vacuum, Safety system, Mechanical,
+Dosimetry and beam quality, or Other. Use null when the source does not support a category.
 machine.pcsn is the globally unique top-level machine identifier labelled Asset on these work
 orders. Do not confuse it with a subcomponent. PCSNs contain letters and numbers only. Product-code
 length varies: known prefixes are H19=TrueBeam Platform, HAL=Halcyon, and H29=Clinac. Preserve an
@@ -594,8 +599,8 @@ def _timestamp_facts(text: str, page_number: int) -> list[tuple[str, str, str, i
     for label, field_path in _TIMESTAMP_FIELDS.items():
         # This order matters for flattened work orders such as ``12:00 PMTime Out8/27...``.
         patterns = (
-            rf"(?P<value>{_TIMESTAMP})\s*{re.escape(label)}\s*:?\s*",
-            rf"{re.escape(label)}\s*:\s*(?P<value>{_TIMESTAMP})",
+            rf"(?P<value>{_TIMESTAMP})[ \t]*{re.escape(label)}[ \t]*:?[ \t]*",
+            rf"{re.escape(label)}[ \t]*:[ \t]*(?P<value>{_TIMESTAMP})",
         )
         for pattern in patterns:
             match = re.search(pattern, text, flags=re.IGNORECASE)
@@ -628,10 +633,10 @@ _INTERVENTION_RULES = (
     ("diagnostic_testing", "Diagnostic testing", r"\b(checked|tested|inspected|disconnected|tried beaming|troubleshoot)\b"),
     ("pcb_replacement", "PCB replacement", r"\b(replaced|changed)\b[^.;\n]{0,100}\b(PCB|board)\b"),
     ("thyratron_replacement", "Thyratron replacement", r"\b(replaced|changed)\b[^.;\n]{0,100}\bthyratron\b"),
-    ("beam_retuning", "Beam retuning", r"\b(retuned|retune|tuned)\b[^.;\n]{0,100}\b(beam|6X|BGM)\b"),
     ("operational_monitoring", "Operational monitoring", r"\b(monitored|monitor operation|observed operation)\b"),
     ("component_replacement", "Component replacement", r"\b(replaced|changed)\b"),
-    ("repair", "Repair", r"\b(repaired|restored|resolved|cleared the issue)\b"),
+    ("beam_retuning", "Beam retuning", r"\b(retuned|retune|tuned)\b[^.;\n]{0,100}\b(beam|6X|BGM)\b"),
+    ("repair", "Repair", r"\b(repaired|restored|resolved|cleared (?:the )?(?:issue|interlock|fault))\b"),
 )
 
 
@@ -701,7 +706,9 @@ def _apply_labelled_document_facts(event: ServiceEvent, document: ParsedDocument
     timing = payload["timing"]
 
     machine = payload["machine"]
-    identity = pcsn_details(machine.get("pcsn") or machine.get("asset_id"))
+    identity = pcsn_details(
+        machine.get("pcsn") or machine.get("asset_id"), product_catalog_map()
+    )
     if identity["pcsn"]:
         machine["pcsn"] = identity["pcsn"]
         machine["asset_id"] = identity["pcsn"]
@@ -813,6 +820,54 @@ def _apply_labelled_document_facts(event: ServiceEvent, document: ParsedDocument
                 }
             )
             evidence_paths.add(field_path)
+
+    classification = payload["classification"]
+    diagnosis = payload["diagnosis"]
+    fault_match = classify_fault(
+        [
+            classification.get("raw_subject"),
+            *diagnosis.get("symptoms", []),
+            *diagnosis.get("observations", []),
+            *diagnosis.get("diagnostic_steps", []),
+            diagnosis.get("root_cause"),
+            raw_intervention,
+            *(part.get("raw_description") for part in payload["parts"]),
+        ]
+    )
+    if fault_match:
+        classification["fault_category"] = fault_match.category
+        classification["fault_subcategory"] = fault_match.subcategory
+        source_evidence = next(
+            (
+                item
+                for item in payload["evidence"]
+                if fault_match.matched_text.casefold() in item["raw_text"].casefold()
+            ),
+            next(
+                (
+                    item
+                    for item in payload["evidence"]
+                    if item["field_path"] == "classification.raw_subject"
+                ),
+                None,
+            ),
+        )
+        for field_path in (
+            "classification.fault_category",
+            "classification.fault_subcategory",
+        ):
+            if source_evidence and field_path not in evidence_paths:
+                payload["evidence"].append(
+                    {
+                        "field_path": field_path,
+                        "page": source_evidence["page"],
+                        "source_section": source_evidence["source_section"],
+                        "raw_text": source_evidence["raw_text"],
+                        "confidence": "high",
+                        "method": "normalized",
+                    }
+                )
+                evidence_paths.add(field_path)
 
     reported_downtime = payload["timing"].get("reported_downtime_hours")
     if (

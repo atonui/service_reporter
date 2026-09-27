@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from enum import StrEnum
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 Hours = Annotated[Decimal, Field(ge=0, decimal_places=2)]
 
@@ -131,6 +131,15 @@ class Timing(StrictModel):
     travel_hours: Hours | None = None
     site_hours: Hours | None = None
     total_work_hours: Hours | None = None
+
+    @field_validator(
+        "malfunction_start", "time_in", "time_out", "machine_release", mode="after"
+    )
+    @classmethod
+    def default_naive_timestamps_to_nairobi(cls, value: datetime | None) -> datetime | None:
+        if value is not None and value.tzinfo is None:
+            return value.replace(tzinfo=timezone(timedelta(hours=3)))
+        return value
 
     @model_validator(mode="after")
     def chronological_times(self) -> Timing:

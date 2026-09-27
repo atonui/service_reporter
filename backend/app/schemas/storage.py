@@ -14,7 +14,7 @@ class FieldChange(StrictModel):
 
 
 class CorrectionHistoryEntry(StrictModel):
-    action: Literal["correction", "approval"]
+    action: Literal["correction", "approval", "archive", "restore"]
     actor: str
     timestamp: datetime
     note: str | None = None
@@ -32,6 +32,10 @@ class StoredServiceEvent(StrictModel):
     approved_by: str | None = None
     approved_at: datetime | None = None
     correction_history: list[CorrectionHistoryEntry] = Field(default_factory=list)
+    archived: bool = False
+    archived_by: str | None = None
+    archived_at: datetime | None = None
+    archive_reason: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -45,3 +49,8 @@ class EventCorrectionRequest(StrictModel):
 class EventApprovalRequest(StrictModel):
     approved_by: str = Field(min_length=1, max_length=120)
     note: str | None = Field(default=None, max_length=500)
+
+
+class EventArchiveRequest(StrictModel):
+    actor: str = Field(min_length=1, max_length=120)
+    reason: str = Field(min_length=1, max_length=500)

@@ -6,12 +6,14 @@ from types import SimpleNamespace
 import pytest
 
 from backend.app.schemas.document import ExtractedPage, ParsedDocument
+from backend.app.schemas.service_event import ServiceEvent
 from backend.app.services.extraction import (
     ExtractionError,
     _apply_labelled_document_facts,
     _canonicalize_model_payload,
     _service_type,
     _source_timestamp,
+    _timestamp_facts,
     extract_service_event,
 )
 
@@ -55,6 +57,45 @@ def extraction_json() -> str:
     return json.dumps(payload)
 
 
+def test_timestamp_facts_do_not_borrow_a_value_from_the_previous_line() -> None:
+    facts = _timestamp_facts(
+        "Malfunction Start: 8/1/2026 8:00 AM\nMachine Release: 8/1/2026 12:30 PM",
+        1,
+    )
+    values = {field_path: value for field_path, value, _quote, _page in facts}
+
+    assert values["timing.malfunction_start"] == "2026-08-01T08:00:00+03:00"
+    assert values["timing.machine_release"] == "2026-08-01T12:30:00+03:00"
+
+
+def test_timestamp_facts_support_flattened_value_before_label_text() -> None:
+    facts = _timestamp_facts(
+        "8/28/2026 12:00 PMTime Out8/27/2026 2:30 PMTime In\n"
+        "8/28/2026 11:00 AMMachine Release\n8/27/2026 1:30 PMMalfunction Start :",
+        1,
+    )
+    values = {field_path: value for field_path, value, _quote, _page in facts}
+
+    assert values["timing.time_out"] == "2026-08-28T12:00:00+03:00"
+    assert values["timing.time_in"] == "2026-08-27T14:30:00+03:00"
+    assert values["timing.machine_release"] == "2026-08-28T11:00:00+03:00"
+    assert values["timing.malfunction_start"] == "2026-08-27T13:30:00+03:00"
+
+
+def test_deterministic_extraction_normalizes_fault_taxonomy_and_evidence() -> None:
+    event = ServiceEvent.model_validate(json.loads(FIXTURE.read_text(encoding="utf-8")))
+    event.classification.fault_category = "Interlock"
+    event.classification.fault_subcategory = None
+
+    normalized = _apply_labelled_document_facts(event, source_document())
+
+    assert normalized.classification.fault_category == "MLC"
+    assert normalized.classification.fault_subcategory == "MLC interlock"
+    paths = {item.field_path for item in normalized.evidence}
+    assert "classification.fault_category" in paths
+    assert "classification.fault_subcategory" in paths
+
+
 def test_falls_back_to_validating_raw_json_when_sdk_has_no_parsed_object(monkeypatch) -> None:
     response = SimpleNamespace(
         output_parsed=None,
@@ -78,6 +119,8 @@ def test_falls_back_to_validating_raw_json_when_sdk_has_no_parsed_object(monkeyp
     result = extract_service_event(source_document(), api_key="test-key", model="gpt-5-mini")
 
     assert result.event.identification.work_order_number == "WO-004479870"
+    assert result.event.classification.fault_category == "MLC"
+    assert result.event.classification.fault_subcategory == "MLC interlock"
     assert result.event.computed.downtime_hours == 4.5
     assert result.model == "gpt-5-mini"
 

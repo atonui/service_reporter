@@ -18,9 +18,10 @@ from reportlab.platypus import (
 
 from backend.app.schemas.report import QuarterlyReport
 
-NAVY = colors.HexColor("#17324D")
-BLUE = colors.HexColor("#2878B5")
-PALE_BLUE = colors.HexColor("#EAF3F9")
+NAVY = colors.HexColor("#006B6B")
+BLUE = colors.HexColor("#009999")
+ORANGE = colors.HexColor("#EC6602")
+PALE_BLUE = colors.HexColor("#E6F5F5")
 PALE_GREY = colors.HexColor("#F4F6F8")
 TEXT = colors.HexColor("#263442")
 
@@ -139,6 +140,12 @@ def render_quarterly_report_pdf(report: QuarterlyReport) -> bytes:
 
     story: list[object] = [
         Paragraph("Service Report", styles["ReportTitle"]),
+        Table(
+            [[""]],
+            colWidths=[180 * mm],
+            rowHeights=[1.5 * mm],
+            style=TableStyle([("BACKGROUND", (0, 0), (-1, -1), ORANGE)]),
+        ),
         Paragraph(
             f"{report.period.label} | {report.period.start_date.isoformat()} to "
             f"{report.period.end_date.isoformat()}",

@@ -20,8 +20,11 @@ class QuarterlyReportRequest(StrictModel):
     working_hours_per_machine: Decimal | None = Field(default=None, gt=0, decimal_places=2)
     machine_hours_overrides: dict[str, Decimal] = Field(default_factory=dict)
     registered_machines: list[RegisteredMachine] = Field(default_factory=list)
+    customer_aliases: dict[str, str] = Field(default_factory=dict)
     holiday_dates: list[date] = Field(default_factory=list)
     use_supplied_holiday_calendar: bool = False
+    operating_weekdays: list[int] = Field(default_factory=lambda: [0, 1, 2, 3, 4])
+    daily_operating_hours: Decimal = Field(default=Decimal("8.00"), gt=0, le=24)
     site_name: str | None = None
     pcsn: str | None = Field(default=None, pattern=r"^[A-Za-z0-9]+$")
 
@@ -42,6 +45,7 @@ class StoredQuarterlyReportRequest(StrictModel):
     working_hours_basis: Decimal | None = Field(default=None, gt=0, decimal_places=2)
     working_hours_per_machine: Decimal | None = Field(default=None, gt=0, decimal_places=2)
     machine_hours_overrides: dict[str, Decimal] = Field(default_factory=dict)
+    report_profile_id: int | None = Field(default=None, ge=1)
     site_name: str | None = None
     pcsn: str | None = Field(default=None, pattern=r"^[A-Za-z0-9]+$")
 

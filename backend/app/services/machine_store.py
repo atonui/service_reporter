@@ -7,6 +7,7 @@ from pathlib import Path
 
 from backend.app.schemas.machine_registry import MachineRegistrationInput, RegisteredMachine
 from backend.app.services.machine_identity import normalize_pcsn, pcsn_details
+from backend.app.services.product_catalog_store import product_catalog_map
 
 
 def _database_path() -> Path:
@@ -43,7 +44,8 @@ def list_registered_machines() -> list[RegisteredMachine]:
         rows = connection.execute(
             "SELECT * FROM registered_machines ORDER BY customer_name COLLATE NOCASE, pcsn"
         ).fetchall()
-    return [_row(row) for row in rows]
+    catalog = product_catalog_map()
+    return [_row(row, catalog) for row in rows]
 
 
 def get_registered_machine(machine_id: int) -> RegisteredMachine | None:
@@ -51,7 +53,7 @@ def get_registered_machine(machine_id: int) -> RegisteredMachine | None:
         row = connection.execute(
             "SELECT * FROM registered_machines WHERE id = ?", (machine_id,)
         ).fetchone()
-    return _row(row) if row else None
+    return _row(row, product_catalog_map()) if row else None
 
 
 def create_registered_machine(value: MachineRegistrationInput) -> RegisteredMachine:
@@ -59,7 +61,8 @@ def create_registered_machine(value: MachineRegistrationInput) -> RegisteredMach
     if not pcsn:
         raise ValueError("A valid PCSN is required.")
     now = datetime.now(UTC).isoformat()
-    product_code = pcsn_details(pcsn)["product_code"]
+    catalog = product_catalog_map()
+    product_code = pcsn_details(pcsn, catalog)["product_code"]
     try:
         with _connect() as connection:
             cursor = connection.execute(
@@ -86,7 +89,7 @@ def create_registered_machine(value: MachineRegistrationInput) -> RegisteredMach
             ).fetchone()
     except sqlite3.IntegrityError as exc:
         raise ValueError(f"PCSN {pcsn} is already registered.") from exc
-    return _row(row)
+    return _row(row, catalog)
 
 
 def update_registered_machine(
@@ -96,7 +99,8 @@ def update_registered_machine(
     if not pcsn:
         raise ValueError("A valid PCSN is required.")
     now = datetime.now(UTC).isoformat()
-    product_code = pcsn_details(pcsn)["product_code"]
+    catalog = product_catalog_map()
+    product_code = pcsn_details(pcsn, catalog)["product_code"]
     try:
         with _connect() as connection:
             cursor = connection.execute(
@@ -125,15 +129,16 @@ def update_registered_machine(
             ).fetchone()
     except sqlite3.IntegrityError as exc:
         raise ValueError(f"PCSN {pcsn} is already registered.") from exc
-    return _row(row)
+    return _row(row, catalog)
 
 
-def _row(row: sqlite3.Row) -> RegisteredMachine:
+def _row(row: sqlite3.Row, catalog: dict[str, str]) -> RegisteredMachine:
+    product_code = pcsn_details(row["pcsn"], catalog)["product_code"]
     return RegisteredMachine(
         id=row["id"],
         pcsn=row["pcsn"],
         customer_name=row["customer_name"],
-        product_code=row["product_code"],
+        product_code=product_code,
         quarterly_hours=row["quarterly_hours"],
         active_from=row["active_from"],
         active_until=row["active_until"],

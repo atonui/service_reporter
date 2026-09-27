@@ -44,11 +44,14 @@ def operating_hours(
     start_date: date,
     end_date: date,
     holiday_dates: set[date],
+    working_days: set[int] | None = None,
+    daily_hours: Decimal = DAILY_OPERATING_HOURS,
 ) -> Decimal:
+    eligible_weekdays = working_days if working_days is not None else {0, 1, 2, 3, 4}
     eligible_days = 0
     current = start_date
     while current <= end_date:
-        if current.weekday() < 5 and current not in holiday_dates:
+        if current.weekday() in eligible_weekdays and current not in holiday_dates:
             eligible_days += 1
         current += timedelta(days=1)
-    return DAILY_OPERATING_HOURS * eligible_days
+    return daily_hours * eligible_days

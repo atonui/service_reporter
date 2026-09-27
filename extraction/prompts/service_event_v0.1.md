@@ -32,4 +32,10 @@ Convert one work-order document into exactly one `ServiceEvent` object that conf
 - Known mappings are `H19` = TrueBeam Platform, `HAL` = Halcyon, and `H29` = Clinac.
 - If the prefix is unknown, preserve the full PCSN and leave product code, serial number, and model null unless the document supports them.
 
+## Customer identity guidance
+
+- Customer name and site name are the same business identity in this application.
+- Populate `customer_site.customer_name` and `customer_site.site_name` with the same supported value.
+- Do not infer or invent a separate site label.
+
 The JSON Schema returned by `GET /v1/service-events/schema` is authoritative.

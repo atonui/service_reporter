@@ -8,7 +8,11 @@ from pathlib import Path
 
 from backend.app.schemas.extraction import ExtractionResult
 from backend.app.schemas.service_event import ComputedMetrics, ServiceEvent
-from backend.app.schemas.storage import EventApprovalRequest, EventCorrectionRequest
+from backend.app.schemas.storage import (
+    EventApprovalRequest,
+    EventArchiveRequest,
+    EventCorrectionRequest,
+)
 from backend.app.services.validation import derive_metrics, validate_service_event
 
 
@@ -53,6 +57,10 @@ def _ensure_review_columns(connection: sqlite3.Connection) -> None:
         "approved_by": "TEXT",
         "approved_at": "TEXT",
         "correction_history_json": "TEXT NOT NULL DEFAULT '[]'",
+        "archived": "INTEGER NOT NULL DEFAULT 0",
+        "archived_by": "TEXT",
+        "archived_at": "TEXT",
+        "archive_reason": "TEXT",
     }
     for name, definition in additions.items():
         if name not in columns:
@@ -122,14 +130,20 @@ def save_extraction(result: ExtractionResult) -> int:
     return int(row["id"])
 
 
-def list_events(include_review_required: bool = True) -> list[dict]:
-    query = "SELECT * FROM stored_service_events"
-    parameters: tuple[object, ...] = ()
+def list_events(
+    include_review_required: bool = True, include_archived: bool = False
+) -> list[dict]:
+    conditions = []
     if not include_review_required:
-        query += " WHERE review_required = 0"
+        conditions.append("review_required = 0")
+    if not include_archived:
+        conditions.append("archived = 0")
+    query = "SELECT * FROM stored_service_events"
+    if conditions:
+        query += " WHERE " + " AND ".join(conditions)
     query += " ORDER BY updated_at DESC, id DESC"
     with _connect() as connection:
-        rows = connection.execute(query, parameters).fetchall()
+        rows = connection.execute(query).fetchall()
     return [_row_to_record(row) for row in rows]
 
 
@@ -152,6 +166,8 @@ def correct_event(event_id: int, request: EventCorrectionRequest) -> dict | None
         ).fetchone()
         if not row:
             return None
+        if row["archived"]:
+            raise ValueError("Archived service events must be restored before correction.")
         old_event = json.loads(row["event_json"])
         new_event = corrected_event.model_dump(mode="json")
         _assert_source_identity_unchanged(old_event, new_event)
@@ -202,6 +218,8 @@ def approve_event(event_id: int, request: EventApprovalRequest) -> dict | None:
         ).fetchone()
         if not row:
             return None
+        if row["archived"]:
+            raise ValueError("Archived service events must be restored before approval.")
         history = json.loads(row["correction_history_json"] or "[]")
         history.append(
             {
@@ -221,6 +239,76 @@ def approve_event(event_id: int, request: EventApprovalRequest) -> dict | None:
             WHERE id = ?
             """,
             (request.approved_by, now, json.dumps(history), now, event_id),
+        )
+        updated = connection.execute(
+            "SELECT * FROM stored_service_events WHERE id = ?", (event_id,)
+        ).fetchone()
+    return _row_to_record(updated)
+
+
+def archive_event(event_id: int, request: EventArchiveRequest) -> dict | None:
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as connection:
+        row = connection.execute(
+            "SELECT * FROM stored_service_events WHERE id = ?", (event_id,)
+        ).fetchone()
+        if not row:
+            return None
+        if row["archived"]:
+            return _row_to_record(row)
+        history = json.loads(row["correction_history_json"] or "[]")
+        history.append(
+            {
+                "action": "archive",
+                "actor": request.actor,
+                "timestamp": now,
+                "note": request.reason,
+                "changes": [],
+            }
+        )
+        connection.execute(
+            """
+            UPDATE stored_service_events SET
+                archived = 1, archived_by = ?, archived_at = ?, archive_reason = ?,
+                correction_history_json = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (request.actor, now, request.reason, json.dumps(history), now, event_id),
+        )
+        updated = connection.execute(
+            "SELECT * FROM stored_service_events WHERE id = ?", (event_id,)
+        ).fetchone()
+    return _row_to_record(updated)
+
+
+def restore_event(event_id: int, request: EventArchiveRequest) -> dict | None:
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as connection:
+        row = connection.execute(
+            "SELECT * FROM stored_service_events WHERE id = ?", (event_id,)
+        ).fetchone()
+        if not row:
+            return None
+        if not row["archived"]:
+            return _row_to_record(row)
+        history = json.loads(row["correction_history_json"] or "[]")
+        history.append(
+            {
+                "action": "restore",
+                "actor": request.actor,
+                "timestamp": now,
+                "note": request.reason,
+                "changes": [],
+            }
+        )
+        connection.execute(
+            """
+            UPDATE stored_service_events SET
+                archived = 0, archived_by = NULL, archived_at = NULL, archive_reason = NULL,
+                correction_history_json = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (json.dumps(history), now, event_id),
         )
         updated = connection.execute(
             "SELECT * FROM stored_service_events WHERE id = ?", (event_id,)
@@ -273,6 +361,10 @@ def _row_to_record(row: sqlite3.Row) -> dict:
         "approved_by": row["approved_by"],
         "approved_at": row["approved_at"],
         "correction_history": json.loads(row["correction_history_json"] or "[]"),
+        "archived": bool(row["archived"]),
+        "archived_by": row["archived_by"],
+        "archived_at": row["archived_at"],
+        "archive_reason": row["archive_reason"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }

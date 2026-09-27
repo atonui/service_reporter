@@ -178,6 +178,56 @@ def test_known_machine_site_repairs_unknown_site_and_populates_filter_options() 
     assert choices.pcsns == ["H194931"]
 
 
+def test_customer_alias_merges_machine_and_event_names() -> None:
+    first = event_for(datetime(2026, 8, 1, 9), "WO-900000101")
+    second = event_for(datetime(2026, 8, 2, 9), "WO-900000102")
+    first.machine.pcsn = first.machine.asset_id = "H196237"
+    second.machine.pcsn = second.machine.asset_id = "HAL1124"
+    first.customer_site.customer_name = first.customer_site.site_name = "Coast General Hospital"
+    second.customer_site.customer_name = second.customer_site.site_name = (
+        "Coast General Teaching and Referral Hospital"
+    )
+    aliases = {
+        "coastgeneralhospital": "Coast General Teaching and Referral Hospital"
+    }
+
+    report = build_quarterly_report(
+        QuarterlyReportRequest(
+            year=2026,
+            quarter=3,
+            working_hours_per_machine="504",
+            customer_aliases=aliases,
+            events=[first, second],
+        )
+    )
+
+    assert len(report.site_breakdown) == 1
+    assert report.site_breakdown[0].site_name == (
+        "Coast General Teaching and Referral Hospital"
+    )
+    assert report.site_breakdown[0].machine_count == 2
+
+
+def test_customer_filter_accepts_an_alias_name() -> None:
+    event = event_for(datetime(2026, 8, 1, 9), "WO-900000103")
+    event.customer_site.customer_name = event.customer_site.site_name = "Coast General Hospital"
+
+    report = build_quarterly_report(
+        QuarterlyReportRequest(
+            year=2026,
+            quarter=3,
+            working_hours_per_machine="504",
+            customer_aliases={
+                "coastgeneralhospital": "Coast General Teaching and Referral Hospital"
+            },
+            site_name="Coast General Hospital",
+            events=[event],
+        )
+    )
+
+    assert report.events_in_period == 1
+
+
 def test_registered_machine_without_events_counts_in_availability() -> None:
     machines = [
         registered_machine("H196237", "Coast General Hospital", quarterly_hours="520"),
