@@ -167,6 +167,27 @@ def test_accepts_legacy_service_event_envelope(monkeypatch) -> None:
     assert result.event.identification.work_order_number == "WO-004479870"
 
 
+def test_accepts_event_envelope(monkeypatch) -> None:
+    response = SimpleNamespace(
+        output_text=json.dumps({"event": json.loads(extraction_json())}),
+        status="completed",
+        incomplete_details=None,
+    )
+
+    class FakeResponses:
+        def create(self, **_kwargs):
+            return response
+
+    class FakeOpenAI:
+        def __init__(self, **_kwargs):
+            self.responses = FakeResponses()
+
+    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=FakeOpenAI))
+    result = extract_service_event(source_document(), api_key="test-key", model="gpt-4o-mini")
+
+    assert result.event.identification.work_order_number == "WO-004479870"
+
+
 def test_normalizes_date_only_timing_and_string_activities(monkeypatch) -> None:
     payload = json.loads(extraction_json())
     payload["timing"]["time_in"] = "2026-08-01"
@@ -175,6 +196,9 @@ def test_normalizes_date_only_timing_and_string_activities(monkeypatch) -> None:
         "Investigate/Trouble Shoot",
         "Replace",
         {"action": "Monitor Operation", "duration": "1.0"},
+    ]
+    payload["personnel"]["service_resources"] = [
+        {"name": "Walter Kiplangat", "role": "Service Resource"}
     ]
     response = SimpleNamespace(
         output_text=json.dumps(payload),
@@ -201,6 +225,7 @@ def test_normalizes_date_only_timing_and_string_activities(monkeypatch) -> None:
         "Monitor Operation",
     ]
     assert result.event.intervention.activities[2].reported_hours == 1
+    assert result.event.personnel.service_resources == ["Walter Kiplangat"]
 
 
 def test_flattens_structured_address_and_parses_day_first_source_dates() -> None:
@@ -220,9 +245,83 @@ def test_flattens_structured_address_and_parses_day_first_source_dates() -> None
     assert _source_timestamp("8/27/2026 1:30 PM") == "2026-08-27T13:30:00+03:00"
 
 
-def test_pmp_and_pmi_are_preventive_and_known_pcsn_supplies_site() -> None:
+def test_repairs_hybrid_model_payload_and_seeds_missing_identification(monkeypatch) -> None:
+    payload = {
+        "schema_version": "0.1",
+        "customer_site": {"customer": "Nakuru County Referral Hospital"},
+        "machine": {"pcs": "H196238"},
+        "classification": {"activity_type": "PMP", "subject": "End of Warranty PMP"},
+        "timing": {
+            "timezone": "Africa/Nairobi",
+            "travel_hours": "7 hours",
+            "site_hours": "17.00",
+            "total_work_hours": "24.00",
+            "agreed_downtime": "",
+        },
+        "diagnosis": {"issues": "Preventive maintenance due"},
+        "intervention": {
+            "actions": ["Replaced filter cartridge", "Replaced internal water"],
+            "closure_summary": "PMP completed successfully according to manuals.",
+        },
+        "parts": {
+            "part_number": "83209605",
+            "part_name": "RELAY, H.V.; RoHS",
+            "installed_qty": "1",
+            "source_of_parts": "V - Varian Supplied",
+        },
+        "follow_ups": "None",
+        "personnel": {"contact": "James Ngure", "service_resource": "Walter Kiplangat"},
+        "handover": {
+            "customer_signature": "James Ngure",
+            "engineer_signature": "Walter Kiplangat",
+        },
+        "evidence": [],
+    }
+    response = SimpleNamespace(
+        output_text=json.dumps(payload),
+        status="completed",
+        incomplete_details=None,
+    )
+
+    class FakeResponses:
+        def create(self, **_kwargs):
+            return response
+
+    class FakeOpenAI:
+        def __init__(self, **_kwargs):
+            self.responses = FakeResponses()
+
+    document = source_document()
+    document.pages[0].text = """
+    05491594CaseWO-004136558Work Order Number
+    H196238Asset
+    End of Warranty PMPSubject
+    Agreed Downtime24.00Total Work Hours
+    17.00Site Hours7.00Travel Hours
+    """
+    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=FakeOpenAI))
+
+    result = extract_service_event(document, api_key="test-key", model="gpt-4o-mini")
+
+    assert result.event.identification.work_order_number == "WO-004136558"
+    assert result.event.identification.case_number == "05491594"
+    assert result.event.machine.pcsn == "H196238"
+    assert result.event.classification.service_type.value == "preventive_maintenance"
+    assert result.event.timing.travel_hours == 7
+    assert result.event.intervention.raw_closure_summary.startswith("PMP completed")
+    assert result.event.parts[0].part_number == "83209605"
+    assert result.event.follow_ups[0].description == "None"
+    assert result.event.personnel.service_resources == ["Walter Kiplangat"]
+    assert result.event.personnel.customer_signatory == "James Ngure"
+    assert result.event.handover.customer_signed is True
+    assert result.event.handover.engineer_signed is True
+
+
+def test_planned_work_labels_are_preventive_and_known_pcsn_supplies_site() -> None:
     assert _service_type("PMP") == "preventive_maintenance"
     assert _service_type("PMI") == "preventive_maintenance"
+    assert _service_type("STB") == "preventive_maintenance"
+    assert _service_type("Service Technical Bulletin") == "preventive_maintenance"
     payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
     payload["machine"]["pcsn"] = payload["machine"]["asset_id"] = "H194931"
     payload["customer_site"]["site_name"] = "Unknown"
@@ -236,6 +335,20 @@ def test_pmp_and_pmi_are_preventive_and_known_pcsn_supplies_site() -> None:
 
     assert corrected.customer_site.site_name == "Garissa County Referral Hospital"
     assert corrected.classification.service_type.value == "preventive_maintenance"
+
+
+def test_stb_document_rule_overrides_corrective_model_label() -> None:
+    payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    payload["classification"]["service_type"] = "corrective_breakdown"
+    event = ServiceEvent.model_validate(payload)
+    document = source_document()
+    document.pages[0].text += "\nPurpose of Visit: STB modification and software upgrade\n"
+
+    corrected = _apply_labelled_document_facts(event, document)
+
+    assert corrected.classification.service_type.value == "preventive_maintenance"
+    evidence = {item.field_path: item.raw_text for item in corrected.evidence}
+    assert evidence["classification.service_type"] == "STB"
 
 
 def test_recovers_labelled_timestamps_and_repair_summary_when_model_omits_them(monkeypatch) -> None:
@@ -282,8 +395,8 @@ def test_recovers_labelled_timestamps_and_repair_summary_when_model_omits_them(m
     assert result.event.timing.malfunction_start.isoformat() == "2026-08-01T08:00:00+03:00"
     assert result.event.timing.machine_release.isoformat() == "2026-08-01T12:30:00+03:00"
     assert result.event.timing.total_work_hours == 4
-    assert result.event.timing.travel_hours is None
-    assert result.event.timing.site_hours is None
+    assert result.event.timing.travel_hours == 0
+    assert result.event.timing.site_hours == 4
     assert "Replaced tnuts" in result.event.intervention.raw_closure_summary
     assert "Retuned the beam" in result.event.intervention.raw_closure_summary
     assert result.event.intervention.normalized_summary == "Component replacement; Beam retuning"

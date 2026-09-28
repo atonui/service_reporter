@@ -28,7 +28,8 @@ from backend.app.services.product_catalog_store import product_catalog_map
 ZERO = Decimal("0.00")
 UNPLANNED_TYPES = {"corrective_breakdown"}
 PREVENTIVE_PATTERN = re.compile(
-    r"\b(?:PMP|PMI|preventive maintenance|planned maintenance)\b", re.IGNORECASE
+    r"\b(?:PMP|PMI|STBs?|service technical bulletins?|preventive maintenance|planned maintenance)\b",
+    re.IGNORECASE,
 )
 
 
@@ -37,7 +38,7 @@ def _q(value: Decimal | int | str) -> Decimal:
 
 
 def _effective_service_type(event: ServiceEvent) -> str:
-    """Protect reporting from older events that labelled explicit PMP/PMI work corrective."""
+    """Protect reporting from events that mislabel explicit planned work as corrective."""
     source_values = [
         event.classification.raw_subject,
         event.classification.fault_category,

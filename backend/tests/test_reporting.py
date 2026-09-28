@@ -108,6 +108,27 @@ def test_preventive_reported_hours_do_not_reduce_uptime_or_downtime_breakdowns()
     assert report.incidents[0].included_in_uptime is False
 
 
+def test_stb_modification_does_not_reduce_uptime_even_if_stored_as_corrective() -> None:
+    event = event_for(datetime(2026, 8, 5, 8), "WO-900000002")
+    event.classification.service_type = ServiceType.CORRECTIVE_BREAKDOWN
+    event.classification.raw_subject = "STB modification and upgrade"
+    event.timing.reported_downtime_hours = Decimal("8.00")
+    event.computed.downtime_hours = Decimal("8.00")
+
+    report = build_quarterly_report(
+        QuarterlyReportRequest(
+            year=2026, quarter=3, working_hours_per_machine="504", events=[event]
+        )
+    )
+
+    assert report.total_reported_downtime_hours == Decimal("8.00")
+    assert report.unplanned_downtime_hours == Decimal("0.00")
+    assert report.uptime_percent == Decimal("100.00")
+    assert report.service_type_breakdown[0].label == "preventive_maintenance"
+    assert report.service_type_breakdown[0].downtime_hours == Decimal("0.00")
+    assert report.incidents[0].included_in_uptime is False
+
+
 def test_uptime_is_calculated_per_machine_then_weighted_upward() -> None:
     first = event_for(datetime(2026, 8, 1, 8), "WO-004479870")
     second = event_for(datetime(2026, 8, 15, 8), "WO-004479871")

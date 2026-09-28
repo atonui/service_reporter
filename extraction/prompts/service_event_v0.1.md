@@ -15,7 +15,8 @@ Convert one work-order document into exactly one `ServiceEvent` object that conf
 
 ## Classification guidance
 
-- `preventive_maintenance`: scheduled inspection or PMP activity.
+- `preventive_maintenance`: scheduled inspection, PMP/PMI activity, or an STB (Service Technical
+  Bulletin) modification or upgrade.
 - `corrective_breakdown`: work performed to restore or repair a faulted machine.
 - `remote_support`: intervention performed without an onsite visit.
 - `customer_request`: information or assistance request that is not maintenance or breakdown repair.

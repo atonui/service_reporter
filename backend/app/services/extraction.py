@@ -146,7 +146,13 @@ def _service_type(value: Any) -> str:
     if not isinstance(value, str):
         return "unknown"
     normalized = value.lower().replace("-", "_").replace(" ", "_")
-    if "prevent" in normalized or normalized in {"pm", "pmp", "pmi"}:
+    if "prevent" in normalized or normalized in {
+        "pm",
+        "pmp",
+        "pmi",
+        "stb",
+        "service_technical_bulletin",
+    }:
         return "preventive_maintenance"
     if "correct" in normalized or "breakdown" in normalized or "repair" in normalized:
         return "corrective_breakdown"
@@ -161,6 +167,39 @@ def _service_type(value: Any) -> str:
 
 def _as_list(value: Any) -> list[Any]:
     return value if isinstance(value, list) else ([value] if value else [])
+
+
+def _person_names(value: Any) -> list[str]:
+    """Normalize common model representations of one or more named people."""
+    names: list[str] = []
+    for item in _as_list(value):
+        candidate: Any = item
+        if isinstance(item, dict):
+            candidate = next(
+                (
+                    item.get(key)
+                    for key in (
+                        "name",
+                        "full_name",
+                        "service_resource",
+                        "resource_name",
+                        "engineer",
+                    )
+                    if item.get(key)
+                ),
+                None,
+            )
+            if candidate is None:
+                first = item.get("first_name")
+                last = item.get("last_name")
+                candidate = " ".join(
+                    part.strip() for part in (first, last) if isinstance(part, str) and part.strip()
+                )
+        if isinstance(candidate, str) and candidate.strip():
+            name = candidate.strip()
+            if name not in names:
+                names.append(name)
+    return names
 
 
 def _text_or_none(value: Any) -> str | None:
@@ -245,9 +284,22 @@ def _canonicalize_model_payload(payload: Any) -> Any:
     """Accept a common flat work-order draft while persisting the canonical nested shape."""
     if not isinstance(payload, dict):
         return payload
-    if isinstance(payload.get("service_event"), dict):
-        payload = payload["service_event"]
-    if "identification" in payload:
+    for envelope in ("service_event", "event"):
+        if isinstance(payload.get(envelope), dict):
+            payload = payload[envelope]
+            break
+    nested_sections = {
+        "identification",
+        "customer_site",
+        "machine",
+        "classification",
+        "timing",
+        "diagnosis",
+        "intervention",
+        "personnel",
+        "handover",
+    }
+    if nested_sections.intersection(payload):
         return _canonicalize_nested_payload(payload)
 
     work_order = payload.get("work_order_number")
@@ -310,7 +362,9 @@ def _canonicalize_model_payload(payload: Any) -> Any:
         "parts": payload.get("parts", []),
         "follow_ups": payload.get("follow_ups", []),
         "personnel": {
-            "service_resources": _as_list(payload.get("service_resources") or payload.get("engineers")),
+            "service_resources": _person_names(
+                payload.get("service_resources") or payload.get("engineers")
+            ),
             "customer_signatory": payload.get("customer_signatory"),
         },
         "handover": {
@@ -352,7 +406,14 @@ def _canonicalize_nested_payload(payload: dict[str, Any]) -> dict[str, Any]:
         )
     result["machine"] = object_with_aliases(
         "machine",
-        {"type": "model", "machine_type": "model", "id": "pcsn", "asset": "pcsn", "serial": "serial_number"},
+        {
+            "type": "model",
+            "machine_type": "model",
+            "id": "pcsn",
+            "asset": "pcsn",
+            "pcs": "pcsn",
+            "serial": "serial_number",
+        },
         {"pcsn", "product_code", "asset_id", "manufacturer", "model", "serial_number"},
     )
     result["classification"] = object_with_aliases(
@@ -382,11 +443,13 @@ def _canonicalize_nested_payload(payload: dict[str, Any]) -> dict[str, Any]:
         )
 
     diagnosis = result.get("diagnosis") if isinstance(result.get("diagnosis"), dict) else {}
+    symptoms = _as_list(diagnosis.get("symptoms"))
+    symptoms.extend(_as_list(diagnosis.get("issues")))
     observations = _as_list(diagnosis.get("observations"))
     observations.extend(_as_list(diagnosis.get("summary")))
     observations.extend(_as_list(diagnosis.get("findings")))
     result["diagnosis"] = {
-        "symptoms": _as_list(diagnosis.get("symptoms")),
+        "symptoms": symptoms,
         "observations": observations,
         "diagnostic_steps": _as_list(diagnosis.get("diagnostic_steps")),
         "root_cause": diagnosis.get("root_cause"),
@@ -425,7 +488,10 @@ def _canonicalize_nested_payload(payload: dict[str, Any]) -> dict[str, Any]:
             }
         )
     result["intervention"] = {
-        "raw_closure_summary": intervention.get("raw_closure_summary") or intervention.get("summary") or ("; ".join(str(item) for item in actions) if actions else None),
+        "raw_closure_summary": intervention.get("raw_closure_summary")
+        or intervention.get("closure_summary")
+        or intervention.get("summary")
+        or ("; ".join(str(item) for item in actions) if actions else None),
         "normalized_summary": intervention.get("normalized_summary"),
         "activities": normalized_activities,
         "resolution": intervention.get("resolution"),
@@ -467,9 +533,43 @@ def _canonicalize_nested_payload(payload: dict[str, Any]) -> dict[str, Any]:
         )
     result["parts"] = normalized_parts
     result["follow_ups"] = normalized_follow_ups
-    result["personnel"] = object_with_aliases("personnel", {"engineers": "service_resources"}, {"service_resources", "customer_signatory"})
-    result["personnel"]["service_resources"] = _as_list(result["personnel"].get("service_resources"))
-    result["handover"] = object_with_aliases("handover", {}, {"customer_signed", "customer_signed_at", "engineer_signed", "engineer_signed_at", "quality_statement"})
+    result["personnel"] = object_with_aliases(
+        "personnel",
+        {
+            "engineers": "service_resources",
+            "service_resource": "service_resources",
+            "contact": "customer_signatory",
+        },
+        {"service_resources", "customer_signatory"},
+    )
+    result["personnel"]["service_resources"] = _person_names(
+        result["personnel"].get("service_resources")
+    )
+    raw_handover = result.get("handover") if isinstance(result.get("handover"), dict) else {}
+    result["handover"] = object_with_aliases(
+        "handover",
+        {
+            "customer_signature_date": "customer_signed_at",
+            "customer_sign_date": "customer_signed_at",
+            "engineer_signature_date": "engineer_signed_at",
+            "field_engineer_sign_date": "engineer_signed_at",
+        },
+        {
+            "customer_signed",
+            "customer_signed_at",
+            "engineer_signed",
+            "engineer_signed_at",
+            "quality_statement",
+        },
+    )
+    if "customer_signed" not in result["handover"] and raw_handover.get("customer_signature"):
+        result["handover"]["customer_signed"] = True
+    if "engineer_signed" not in result["handover"] and (
+        raw_handover.get("engineer_signature") or raw_handover.get("field_engineer_signature")
+    ):
+        result["handover"]["engineer_signed"] = True
+    for signed_at in {"customer_signed_at", "engineer_signed_at"}:
+        result["handover"][signed_at] = _datetime_or_none(result["handover"].get(signed_at))
     normalized_evidence = []
     for index, item in enumerate(_as_list(result.get("evidence"))):
         if not isinstance(item, dict):
@@ -503,7 +603,9 @@ def _canonicalize_nested_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def _parse_model_output(response: Any) -> ExtractedServiceEvent:
+def _parse_model_output(
+    response: Any, document: ParsedDocument | None = None
+) -> ExtractedServiceEvent:
     """Validate the raw JSON so incomplete Responses are handled before parsing."""
     if getattr(response, "status", None) != "completed":
         detail = _safe_response_diagnostic(response)
@@ -514,6 +616,8 @@ def _parse_model_output(response: Any) -> ExtractedServiceEvent:
         try:
             payload = json.loads(output_text)
             payload = _canonicalize_model_payload(payload)
+            if document is not None and isinstance(payload, dict):
+                payload = _seed_required_sections(payload, document)
             return ExtractedServiceEvent.model_validate(payload)
         except (json.JSONDecodeError, ValidationError) as exc:
             detail = _safe_response_diagnostic(response)
@@ -531,34 +635,76 @@ def _parse_model_output(response: Any) -> ExtractedServiceEvent:
     raise ExtractionError(f"The model returned no structured extraction ({detail}).")
 
 
+def _seed_required_sections(
+    payload: dict[str, Any], document: ParsedDocument
+) -> dict[str, Any]:
+    """Seed schema-required containers and trusted labelled identity before validation."""
+    result = dict(payload)
+    for section in {"identification", "customer_site", "machine", "classification", "timing"}:
+        if not isinstance(result.get(section), dict):
+            result[section] = {}
+    for field_path, value, _quote, _page in _labelled_document_facts(document):
+        section, field = field_path.split(".", 1)
+        if section in result and not result[section].get(field):
+            result[section][field] = value
+    return result
+
+
 def _labelled_document_facts(document: ParsedDocument) -> list[tuple[str, str, str, int]]:
     """Read unambiguous labelled fields from the PDF text without an LLM interpretation."""
     facts: list[tuple[str, str, str, int]] = []
     for page in document.pages:
         text = page.text
         patterns = {
-            "identification.work_order_number": r"(?P<value>WO-\d+)\s*Work\s*Order",
-            "identification.case_number": r"(?P<value>\d{6,})\s*Case\s*WO-\d+",
-            "machine.pcsn": r"(?P<value>[A-Z]{1,4}\d{3,})\s*Asset\b",
-            "classification.raw_subject": r"(?P<value>[^\n]{1,200}?)\s*Subject\b",
+            "identification.work_order_number": (
+                r"(?P<value>WO-\d+)\s*Work\s*Order",
+                r"Work\s*Order(?:\s*Number)?\s*:?[ \t]*(?P<value>WO-\d+)",
+            ),
+            "identification.case_number": (
+                r"(?P<value>\d{6,})\s*Case\s*WO-\d+",
+                r"\bCase\s*:?[ \t]*(?P<value>\d{6,})\b",
+            ),
+            "machine.pcsn": (
+                r"(?P<value>(?-i:[A-Z]{1,4}\d{3,}))\s*Asset\b",
+                r"\bAsset\s*:?[ \t]*(?P<value>(?-i:[A-Z]{1,4}\d{3,}))\b",
+            ),
+            "classification.raw_subject": (
+                r"(?P<value>[^\n]{1,200}?)\s*Subject\b",
+                r"\bSubject\s*:?[ \t]*(?P<value>[^\n]{1,200})",
+            ),
         }
-        for field_path, pattern in patterns.items():
-            match = re.search(pattern, text, flags=re.IGNORECASE)
+        for field_path, candidates in patterns.items():
+            match = next(
+                (
+                    found
+                    for pattern in candidates
+                    if (found := re.search(pattern, text, flags=re.IGNORECASE))
+                ),
+                None,
+            )
             if match:
                 facts.append((field_path, match.group("value"), match.group(0), page.page_number))
-        hours = re.search(
-            r"Agreed Downtime\s*(?P<downtime>\d+(?:\.\d+)?)\s*Total Work Hours\s*"
-            r"(?P<total>\d+(?:\.\d+)?)",
-            text,
-            flags=re.IGNORECASE,
-        )
-        if hours:
-            fields = {
-                "timing.reported_downtime_hours": "downtime",
-                "timing.total_work_hours": "total",
-            }
-            for field_path, group in fields.items():
-                facts.append((field_path, hours.group(group), hours.group(0), page.page_number))
+        labelled_hours = {
+            "timing.reported_downtime_hours": "Agreed Downtime",
+            "timing.travel_hours": "Travel Hours",
+            "timing.site_hours": "Site Hours",
+            "timing.total_work_hours": "Total Work Hours",
+        }
+        for field_path, label in labelled_hours.items():
+            match = next(
+                (
+                    found
+                    for pattern in (
+                        rf"(?P<value>\d+(?:\.\d+)?)[ \t]*{label}(?![A-Za-z])",
+                        rf"{label}[ \t]*:?[ \t]*(?P<value>\d+(?:\.\d+)?)(?![\d.])"
+                        r"(?![ \t]*(?:Agreed Downtime|Travel Hours|Site Hours|Total Work Hours)\b)",
+                    )
+                    if (found := re.search(pattern, text, flags=re.IGNORECASE))
+                ),
+                None,
+            )
+            if match:
+                facts.append((field_path, match.group("value"), match.group(0), page.page_number))
         facts.extend(_timestamp_facts(text, page.page_number))
     return facts
 
@@ -727,7 +873,7 @@ def _apply_labelled_document_facts(event: ServiceEvent, document: ParsedDocument
 
     document_text = "\n".join(page.text for page in document.pages)
     preventive_match = re.search(
-        r"\b(?:PMP|PMI|preventive maintenance|planned maintenance)\b",
+        r"\b(?:PMP|PMI|STBs?|service technical bulletins?|preventive maintenance|planned maintenance)\b",
         document_text,
         flags=re.IGNORECASE,
     )
@@ -955,7 +1101,7 @@ def extract_service_event(
         detail = _safe_request_diagnostic(exc)
         raise ExtractionError(f"The model extraction request failed ({detail}).") from exc
 
-    extracted = _parse_model_output(response)
+    extracted = _parse_model_output(response, document)
 
     event = ServiceEvent(
         **extracted.model_dump(),
