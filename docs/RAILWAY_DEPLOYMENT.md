@@ -45,20 +45,14 @@ The repository root should contain `pyproject.toml`, `README.md`, and the `backe
 1. In Railway, select **New Project**.
 2. Choose **Deploy from GitHub repo**.
 3. Connect GitHub if requested and select the private repository.
-4. Allow Railway to detect the Python project from `pyproject.toml`.
-5. Set the build command to:
+4. Railway will detect the included root-level `Dockerfile` automatically. Confirm the deployment
+   log contains `Using detected Dockerfile`.
+5. Do not set a custom build or start command. The image installs the project and starts Uvicorn on
+   Railway's runtime `PORT` automatically.
 
-   ```text
-   pip install .
-   ```
-
-6. Set the start command to:
-
-   ```text
-   uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT
-   ```
-
-Railway supplies `PORT` at runtime. The application must listen on `0.0.0.0` and that port.
+The same container defaults to port 8000 when run locally, but Railway supplies `PORT` at runtime.
+The root-level `main.py` exposes the application as `main:app`; the implementation remains in
+`backend/app/main.py` so existing internal imports continue to work.
 
 ## 3. Attach persistent storage
 
@@ -138,8 +132,11 @@ the persisted SQLite file. Expect a short interruption when a deployment remount
 
 ### Application does not start
 
-- Confirm the start command uses `--host 0.0.0.0 --port $PORT`.
-- Confirm Railway detected the repository root containing `pyproject.toml`.
+- Confirm Railway detected the root-level `Dockerfile`.
+- Remove any stale dashboard build or start command that overrides the Dockerfile.
+- Confirm the repository root contains both `Dockerfile` and `pyproject.toml`.
+- If a manual start command is unavoidable, use
+  `uvicorn main:app --host 0.0.0.0 --port $PORT`.
 - Review build logs for dependency-installation failures.
 
 ### Data disappears after a deploy

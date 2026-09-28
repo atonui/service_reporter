@@ -11,9 +11,14 @@ from backend.app.main import app
 from backend.app.schemas.extraction import ExtractionResult
 from backend.app.schemas.service_event import ServiceEvent
 from backend.app.services.event_store import save_extraction
+from main import app as root_app
 
 client = TestClient(app)
 FIXTURE = Path(__file__).parent / "fixtures" / "wo_004479870.json"
+
+
+def test_root_entry_point_exports_application() -> None:
+    assert root_app is app
 
 
 def test_health() -> None:

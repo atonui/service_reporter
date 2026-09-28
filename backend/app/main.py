@@ -4,7 +4,7 @@ from backend.app.api.routes import router
 
 app = FastAPI(
     title="Service Intelligence API",
-    version="0.21.4",
+    version="0.21.6",
     description="Auditable work-order extraction and validation.",
 )
 app.include_router(router)
